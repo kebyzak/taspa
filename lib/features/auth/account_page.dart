@@ -1,8 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../app/theme.dart';
 import '../../core/backend_config.dart';
 import '../../core/offline_store.dart';
 import '../notifications/notifications.dart';
@@ -96,7 +99,9 @@ class _AccountPageState extends State<AccountPage> {
         setState(() {
           _message = error.code == 'email_not_confirmed'
               ? 'Verify your email before signing in.'
-              : 'That request could not be completed. Check your details and try again.';
+              : 'That request could not be completed. Check your details and try again.'
+                    // Debug builds show the real Supabase reason; release keeps the neutral text.
+                    '${kDebugMode ? '\n[${error.statusCode}] ${error.code}: ${error.message}' : ''}';
         });
       }
     } on PostgrestException catch (error) {
@@ -141,8 +146,16 @@ class _AccountPageState extends State<AccountPage> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancel')),
-          TextButton(onPressed: () { if (password.isNotEmpty) Navigator.pop(dialog, true); }, child: const Text('Delete account')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (password.isNotEmpty) Navigator.pop(dialog, true);
+            },
+            child: const Text('Delete account'),
+          ),
         ],
       ),
     );
@@ -151,21 +164,32 @@ class _AccountPageState extends State<AccountPage> {
     final push = context.read<AndroidPush>();
     final store = context.read<OfflineStore>();
     final id = client.auth.currentUser?.id;
-    setState(() { _saving = true; _message = null; });
+    setState(() {
+      _saving = true;
+      _message = null;
+    });
     try {
-      await client.functions.invoke('delete-account', body: {'confirm': true, 'password': password});
+      await client.functions.invoke(
+        'delete-account',
+        body: {'confirm': true, 'password': password},
+      );
       await push.beforeSignOut().catchError((Object _) {});
       await client.auth.signOut(scope: SignOutScope.local);
       if (id != null) await store.forgetEdits(id).catchError((Object _) {});
       if (mounted) context.go('/discover');
     } on FunctionException catch (error) {
       if (mounted) {
-        setState(() => _message = error.status == 403
-          ? 'Check your current password and try again.'
-          : 'Could not confirm account deletion. Try again.');
+        setState(
+          () => _message = error.status == 403
+              ? 'Check your current password and try again.'
+              : 'Could not confirm account deletion. Try again.',
+        );
       }
     } on Exception {
-      if (mounted) setState(() => _message = 'Could not confirm account deletion. Try again.');
+      if (mounted)
+        setState(
+          () => _message = 'Could not confirm account deletion. Try again.',
+        );
     } finally {
       password = '';
       if (mounted) setState(() => _saving = false);
@@ -175,19 +199,36 @@ class _AccountPageState extends State<AccountPage> {
   Future<void> _signOut(String owner) async {
     final store = context.read<OfflineStore>();
     final push = context.read<AndroidPush>();
-    setState(() { _saving = true; _message = null; });
+    setState(() {
+      _saving = true;
+      _message = null;
+    });
     try {
       if (await store.hasEdits(owner)) {
         if (!mounted) return;
-        final keep = await showDialog<bool>(context: context, builder: (dialog) => AlertDialog(
-          title: const Text('Keep unsynced changes?'),
-          content: const Text('You can restore saved drafts and pending changes when you sign in to this account again.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Discard')),
-            TextButton(onPressed: () => Navigator.pop(dialog, true), child: const Text('Keep on this device')),
-          ],
-        ));
+        final keep = await showDialog<bool>(
+          context: context,
+          builder: (dialog) => AlertDialog(
+            title: const Text('Keep unsynced changes?'),
+            content: const Text(
+              'You can restore saved drafts and pending changes when you sign in to this account again.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialog),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, false),
+                child: const Text('Discard'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, true),
+                child: const Text('Keep on this device'),
+              ),
+            ],
+          ),
+        );
         if (keep == null) return;
         if (!keep) await store.forgetEdits(owner);
       }
@@ -232,10 +273,26 @@ class _AccountPageState extends State<AccountPage> {
         }
       },
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
         children: [
+          if (phase == AccountPhase.guest) ...[
+            Center(
+              child: SvgPicture.asset(
+                'assets/brand/wordmark_ivory.svg',
+                width: 120,
+                semanticsLabel: 'Taspa',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Your film and TV diary',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: mutedColor),
+            ),
+            const SizedBox(height: 40),
+          ],
           Text(
-            phase == AccountPhase.ready ? 'Profile' : label,
+            phase == AccountPhase.ready ? 'Account' : label,
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 24),
@@ -247,8 +304,10 @@ class _AccountPageState extends State<AccountPage> {
               onPressed: _saving ? null : () => _signOut(account.userId!),
               child: const Text('Sign out'),
             ),
-            TextButton(onPressed: _saving ? null : _deleteAccount, child: const Text('Delete account')),
-            TextButton(onPressed: () => context.push('/help'), child: const Text('Help')),
+            TextButton(
+              onPressed: _saving ? null : _deleteAccount,
+              child: const Text('Delete account'),
+            ),
           ],
           if (phase == AccountPhase.guest)
             TextField(
@@ -295,6 +354,7 @@ class _AccountPageState extends State<AccountPage> {
           ],
           if (phase == AccountPhase.guest)
             Wrap(
+              alignment: WrapAlignment.center,
               children: [
                 if (_form != _Form.signIn)
                   TextButton(
@@ -318,6 +378,12 @@ class _AccountPageState extends State<AccountPage> {
                   ),
               ],
             ),
+          const SizedBox(height: 24),
+          TextButton(
+            onPressed: () => context.push('/help'),
+            style: TextButton.styleFrom(foregroundColor: mutedColor),
+            child: const Text('About Taspa and help'),
+          ),
         ],
       ),
     );

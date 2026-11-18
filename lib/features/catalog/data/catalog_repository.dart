@@ -7,12 +7,14 @@ import '../../../core/backend_config.dart';
 import '../../../core/offline_store.dart';
 
 enum MediaKind { movie, show }
+
 enum BrowseShelf { trending, popular, recent, upcoming }
 
 typedef CatalogPerson = ({int id, String name, String? role, String? portrait});
 
 CatalogPerson personFromMap(Map<String, dynamic> row) => (
-  id: row['tmdb_id'] as int, name: row['name'] as String,
+  id: row['tmdb_id'] as int,
+  name: row['name'] as String,
   role: (row['role'] ?? row['department']) as String?,
   portrait: row['portrait'] as String?,
 );
@@ -45,7 +47,9 @@ class CatalogTitle {
     backdrop: row['backdrop_path'] as String?,
     releaseDay: DateTime.tryParse(row['first_release_day'] as String? ?? ''),
     runtime: row['runtime_minutes'] as int?,
-    genres: List<String>.from((row['genres'] ?? row['details']?['genres']) as List? ?? const []),
+    genres: List<String>.from(
+      (row['genres'] ?? row['details']?['genres']) as List? ?? const [],
+    ),
     details: row['details'] as Map<String, dynamic>? ?? const {},
     releaseStatus: row['source_release_status'] as String?,
   );
@@ -71,15 +75,29 @@ class CatalogTitle {
 
   String get location => '/titles/${kind.name}/$tmdbId';
 
-  Map<String,dynamic> toMap() => {
-    'id':id,'kind':kind.name,'tmdb_id':tmdbId,'display_title':name,'original_title':originalTitle,
-    'overview':overview,'poster_path':poster,'backdrop_path':backdrop,
-    'first_release_day':releaseDay?.toIso8601String(),'runtime_minutes':runtime,
-    'genres':genres,'details':details,'source_release_status':releaseStatus,
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'kind': kind.name,
+    'tmdb_id': tmdbId,
+    'display_title': name,
+    'original_title': originalTitle,
+    'overview': overview,
+    'poster_path': poster,
+    'backdrop_path': backdrop,
+    'first_release_day': releaseDay?.toIso8601String(),
+    'runtime_minutes': runtime,
+    'genres': genres,
+    'details': details,
+    'source_release_status': releaseStatus,
   };
 }
 
-typedef CatalogPage = ({List<CatalogTitle> items, List<CatalogPerson> people, int? nextPage, bool stale});
+typedef CatalogPage = ({
+  List<CatalogTitle> items,
+  List<CatalogPerson> people,
+  int? nextPage,
+  bool stale,
+});
 typedef CatalogSeason = ({String id, int number, String title, bool loaded});
 typedef CatalogEpisode = ({
   String id,
@@ -102,12 +120,49 @@ class CatalogRepository {
   final SupabaseClient client;
   final OfflineStore store;
 
-  Future<Map<String,dynamic>> _call(Map<String,Object> input) {
+  // Cache-first windows per operation; they mirror the server's TTLs so the free-tier
+  // Edge Function quota is only spent when the device copy is actually old.
+  static const _fresh = {
+    'trending': Duration(hours: 2),
+    'search': Duration(minutes: 30),
+    'hydrate': Duration(hours: 6),
+    'person': Duration(hours: 24),
+  };
+
+  Future<Map<String, dynamic>> _call(Map<String, Object> input) {
     if (input['operation'] == 'hydrate_season') return _request(input);
-    return store.cached('', 'catalog:${jsonEncode(input)}', () => _request(input),
-      canUseCache: (error) => transientReadFailure(error) ||
-          (error is CatalogFailure && (error.status == 429 || error.status >= 500)),
-      fallback: (saved) => {...saved as Map<String,dynamic>,'stale':true});
+    return store.cached(
+      '',
+      'catalog:${jsonEncode(input)}',
+      () => _request(input),
+      canUseCache: (error) =>
+          transientReadFailure(error) ||
+          (error is CatalogFailure &&
+              (error.status == 429 || error.status >= 500)),
+      fallback: (saved) => {...saved as Map<String, dynamic>, 'stale': true},
+      maxAge: _fresh[input['operation']],
+      reuse: (saved) => saved as Map<String, dynamic>,
+    );
+  }
+
+  /// Personal "For you" picks from similar lists already stored server-side; no TMDB or Edge call.
+  Future<List<CatalogTitle>> forYou({bool refresh = false}) async {
+    final owner = client.auth.currentUser?.id;
+    if (owner == null) return [];
+    if (refresh)
+      await store.remove(owner, 'cache', 'for_you').catchError((Object _) {});
+    final rows = await store.cached(
+      owner,
+      'for_you',
+      () async => await client.schema('api').rpc('for_you') as List,
+      fallback: (saved) => saved as List,
+      maxAge: const Duration(minutes: 30),
+      reuse: (saved) => saved as List,
+    );
+    return [
+      for (final row in rows.cast<Map<String, dynamic>>())
+        CatalogTitle.fromMap(row),
+    ];
   }
 
   Future<Map<String, dynamic>> _request(Map<String, Object> input) async {
@@ -139,7 +194,8 @@ class CatalogRepository {
       if (kind != null) 'kind': kind.name,
       'query': ?query,
       'page': page,
-      if (query == null) 'shelf': shelf == BrowseShelf.recent ? 'new' : shelf.name,
+      if (query == null)
+        'shelf': shelf == BrowseShelf.recent ? 'new' : shelf.name,
       'genre': ?genre,
     });
     final data = json['data'] as Map<String, dynamic>;
@@ -148,7 +204,9 @@ class CatalogRepository {
           .map((item) => CatalogTitle.fromMap(item as Map<String, dynamic>))
           .toList(),
       nextPage: data['next_page'] as int?,
-      people: (data['people'] as List? ?? const []).map((row) => personFromMap(row as Map<String,dynamic>)).toList(),
+      people: (data['people'] as List? ?? const [])
+          .map((row) => personFromMap(row as Map<String, dynamic>))
+          .toList(),
       stale: json['stale'] == true,
     );
   }
@@ -175,7 +233,9 @@ class CatalogRepository {
           .maybeSingle();
       if (existing == null) rethrow;
       try {
-        final metadata = await client.schema('api').rpc('title_metadata', params: {'title': existing['id']});
+        final metadata = await client
+            .schema('api')
+            .rpc('title_metadata', params: {'title': existing['id']});
         if (metadata != null) existing['details'] = metadata;
       } on Exception {
         // Core normalized metadata is still useful when extras are unavailable.
@@ -185,24 +245,43 @@ class CatalogRepository {
   }
 
   Future<CatalogTitle> sharedTitle(String id) async {
-    final row = await client.schema('api').from('titles').select('kind,tmdb_id').eq('id', id).single();
-    return detail(MediaKind.values.byName(row['kind'] as String), row['tmdb_id'] as int);
+    final row = await client
+        .schema('api')
+        .from('titles')
+        .select('kind,tmdb_id')
+        .eq('id', id)
+        .single();
+    return detail(
+      MediaKind.values.byName(row['kind'] as String),
+      row['tmdb_id'] as int,
+    );
   }
 
-  Future<({CatalogPerson identity, List<CatalogTitle> credits})> person(int id) async {
+  Future<({CatalogPerson identity, List<CatalogTitle> credits})> person(
+    int id,
+  ) async {
     final result = await _call({'operation': 'person', 'tmdb_id': id});
-    final row = result['data'] as Map<String,dynamic>;
-    return (identity: personFromMap(row), credits: (row['items'] as List)
-      .map((item) => CatalogTitle.fromMap(item as Map<String,dynamic>)).toList());
+    final row = result['data'] as Map<String, dynamic>;
+    return (
+      identity: personFromMap(row),
+      credits: (row['items'] as List)
+          .map((item) => CatalogTitle.fromMap(item as Map<String, dynamic>))
+          .toList(),
+    );
   }
 
   Future<List<CatalogSeason>> seasons(String showId) async {
-    final rows = await store.cached('', 'seasons:$showId', () async => await client
-        .schema('api')
-        .from('seasons')
-        .select('id,season_number,display_title,loaded_at')
-        .eq('show_id', showId)
-        .order('season_number'), fallback: (saved) => (saved as List).cast<Map<String,dynamic>>());
+    final rows = await store.cached(
+      '',
+      'seasons:$showId',
+      () async => await client
+          .schema('api')
+          .from('seasons')
+          .select('id,season_number,display_title,loaded_at')
+          .eq('show_id', showId)
+          .order('season_number'),
+      fallback: (saved) => (saved as List).cast<Map<String, dynamic>>(),
+    );
     return rows
         .map(
           (row) => (
@@ -225,38 +304,58 @@ class CatalogRepository {
 
   Future<List<CatalogEpisode>> episodes(String showId, String seasonId) async {
     final owner = client.auth.currentUser?.id ?? '';
-    final result = await store.cached(owner, 'episodes:$showId:$seasonId', () async {
-      final response = await client
-                .schema('api')
-                .rpc(
-                  'show_episode_page',
-                  params: {'title_id': showId, 'selected_season': seasonId},
-                )
-            as Map<String, dynamic>;
-      if ((client.auth.currentUser?.id ?? '') != owner) throw const CatalogFailure(401);
-      return response;
-    }, fallback: (saved) => saved as Map<String,dynamic>);
-    final pending = owner.isEmpty ? null : await store.read(owner,'outbox',showId) as Map<String,dynamic>?;
-    final payload = pending?['sync'] == 'conflict' ? null : pending?['payload'] as Map<String,dynamic>?;
-    final batch = (payload?['episodes'] as List? ?? const []).map((item) => item['id']).toSet();
-    return (result['episodes'] as List)
-        .map(
-          (row) {
-            final individual = row['id'] == payload?['episode_id'] && pending?['action'] != 'apply_show_batch';
-            final inBatch = batch.contains(row['id']);
-            final watching = individual ? (payload?['watched'] as bool?) : inBatch
-                ? !{'remove_show','mark_season_unwatched'}.contains(payload?['scope']) : null;
-            return (
-            id: row['id'] as String,
-            number: row['number'] as int,
-            title: row['title'] as String,
-            released: row['released'] as bool,
-            releaseDay: row['release_day'] as String?,
-            watched: watching ?? row['watched'] as bool,
-            watchedOn: individual ? (payload?['watched_on'] as String?) : (inBatch ? null : row['watched_on'] as String?),
-            revision: row['revision'] as int,
-          ); },
-        )
-        .toList();
+    final result = await store.cached(
+      owner,
+      'episodes:$showId:$seasonId',
+      () async {
+        final response =
+            await client
+                    .schema('api')
+                    .rpc(
+                      'show_episode_page',
+                      params: {'title_id': showId, 'selected_season': seasonId},
+                    )
+                as Map<String, dynamic>;
+        if ((client.auth.currentUser?.id ?? '') != owner)
+          throw const CatalogFailure(401);
+        return response;
+      },
+      fallback: (saved) => saved as Map<String, dynamic>,
+    );
+    final pending = owner.isEmpty
+        ? null
+        : await store.read(owner, 'outbox', showId) as Map<String, dynamic>?;
+    final payload = pending?['sync'] == 'conflict'
+        ? null
+        : pending?['payload'] as Map<String, dynamic>?;
+    final batch = (payload?['episodes'] as List? ?? const [])
+        .map((item) => item['id'])
+        .toSet();
+    return (result['episodes'] as List).map((row) {
+      final individual =
+          row['id'] == payload?['episode_id'] &&
+          pending?['action'] != 'apply_show_batch';
+      final inBatch = batch.contains(row['id']);
+      final watching = individual
+          ? (payload?['watched'] as bool?)
+          : inBatch
+          ? !{
+              'remove_show',
+              'mark_season_unwatched',
+            }.contains(payload?['scope'])
+          : null;
+      return (
+        id: row['id'] as String,
+        number: row['number'] as int,
+        title: row['title'] as String,
+        released: row['released'] as bool,
+        releaseDay: row['release_day'] as String?,
+        watched: watching ?? row['watched'] as bool,
+        watchedOn: individual
+            ? (payload?['watched_on'] as String?)
+            : (inBatch ? null : row['watched_on'] as String?),
+        revision: row['revision'] as int,
+      );
+    }).toList();
   }
 }

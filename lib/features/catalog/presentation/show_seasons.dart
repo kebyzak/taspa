@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../app/phosphor.dart';
+import '../../../app/theme.dart';
 import '../../library/data/library_repository.dart';
 import '../../social/presentation/reviews.dart';
 import '../data/catalog_repository.dart';
@@ -200,47 +202,112 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     }
   }
 
+  Future<void> _episodeSheet(CatalogEpisode episode) async {
+    final tracked = widget.tracking;
+    if (tracked == null || widget.pending) return;
+    final numbered = (_selected?.number ?? 0) > 0;
+    final canMark = tracked.intent != null || numbered;
+    final action = await showModalBottomSheet<String>(useRootNavigator: true, 
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text('E${episode.number} · ${episode.title}', style: Theme.of(context).textTheme.titleLarge),
+            ),
+            if (episode.watched)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                child: Text('Watched · ${episode.watchedOn ?? 'Date unknown'}', style: Theme.of(context).textTheme.bodySmall),
+              ),
+            if (!episode.watched && canMark)
+              ListTile(leading: const Icon(PhosphorIconsRegular.checkCircle), title: const Text('Mark watched'),
+                onTap: () => Navigator.pop(context, 'mark')),
+            if (numbered)
+              ListTile(leading: const Icon(PhosphorIconsRegular.checks), title: Text('Mark watched up to E${episode.number}'),
+                onTap: () => Navigator.pop(context, 'through')),
+            if (episode.watched) ...[
+              ListTile(leading: const Icon(PhosphorIconsRegular.calendarBlank), title: const Text('Edit watch date'),
+                onTap: () => Navigator.pop(context, 'date')),
+              ListTile(leading: const Icon(PhosphorIconsRegular.calendarX), title: const Text('Clear date'),
+                onTap: () => Navigator.pop(context, 'clear')),
+              ListTile(leading: const Icon(PhosphorIconsRegular.xCircle), title: const Text('Mark unwatched'),
+                onTap: () => Navigator.pop(context, 'unwatch')),
+            ],
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'through') {
+      await _batch('mark_through', 'Mark through episode ${episode.number}?', episode: episode.id);
+    } else {
+      await _change(episode, action);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final selected = _selected;
     final tracked = widget.tracking;
-    final released = _episodes.where((e) => e.released);
+    final released = _episodes.where((e) => e.released).toList();
     final upcoming = _episodes.where((e) => !e.released);
+    final busy = _loading || widget.pending;
+    final numbered = (selected?.number ?? 0) > 0;
+    final watchedCount = released.where((e) => e.watched).length;
+    final batch = [
+      if (numbered) ('mark_season_watched', 'Mark season watched', 'Mark released episodes watched?'),
+      if (numbered && tracked?.intent != null) ('mark_season_unwatched', 'Mark season unwatched', 'Mark this season unwatched?'),
+      if (['Ended','Canceled'].contains(widget.show.releaseStatus))
+        ('mark_ended_show_watched', 'Mark all released episodes watched', 'Mark all released episodes watched?'),
+      if (tracked?.intent != null) ('remove_show', 'Remove show tracking', 'Remove show tracking?'),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 24),
-        Text('Seasons', style: theme.textTheme.titleLarge),
-        if (_seasons.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          DropdownButton<String>(
-            isExpanded: true,
-            value: selected?.id,
-            hint: const Text('Choose season'),
-            items: [
-              for (final season in _seasons)
-                DropdownMenuItem(
-                  value: season.id,
-                  child: Text(
-                    season.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-            onChanged: (id) =>
-                _load(_seasons.firstWhere((season) => season.id == id)),
+        SectionHeader('Seasons', padding: EdgeInsets.zero, trailing: tracked == null || batch.isEmpty ? null : PopupMenuButton<String>(
+          tooltip: 'Season actions',
+          enabled: !busy,
+          icon: const Icon(PhosphorIconsRegular.dotsThree),
+          onSelected: (scope) {
+            final (_, _, question) = batch.firstWhere((item) => item.$1 == scope);
+            _batch(scope, question, season: scope.contains('season') ? selected!.id : null);
+          },
+          itemBuilder: (context) => [
+            for (final (scope, label, _) in batch) PopupMenuItem(value: scope, child: Text(label)),
+          ],
+        )),
+        if (_seasons.isNotEmpty)
+          SizedBox(
+            height: 48,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _seasons.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final season = _seasons[index];
+                final active = season.id == selected?.id;
+                return ChoiceChip(
+                  label: Text(season.number > 0 ? 'Season ${season.number}' : season.title),
+                  tooltip: season.title,
+                  selected: active,
+                  onSelected: (_) => _load(season),
+                );
+              },
+            ),
           ),
-        ],
-        if (_loading) const LinearProgressIndicator(),
+        if (_loading) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
         if (_failed)
-          TextButton(
-            onPressed: selected == null ? _loadSeasons : () => _load(selected),
-            child: const Text('Could not load episodes. Retry'),
-          ),
+          InlineNotice('Could not load episodes.', icon: PhosphorIconsRegular.warningCircle, action: 'Retry',
+            onAction: selected == null ? _loadSeasons : () => _load(selected)),
         if (!_loading && !_failed && _seasons.isEmpty)
-          const Text('Season information is unavailable.'),
+          const InlineNotice('Season information is unavailable.'),
         if (selected != null && widget.show.id != null)
           OpinionActions(
             key: ValueKey(selected.id),
@@ -248,107 +315,66 @@ class _ShowSeasonsState extends State<ShowSeasons> {
             season: selected.id,
             label: 'season',
           ),
-        if (tracked != null && released.isNotEmpty)
-          Text(
-            '${released.where((e) => e.watched).length} of ${released.length} released episodes watched',
-            style: theme.textTheme.bodySmall,
-          ),
-        if (tracked != null)
-          Wrap(
-            spacing: 8,
-            children: [
-              if ((selected?.number ?? 0) > 0) ...[
-                TextButton(
-                  onPressed: _loading || widget.pending
-                      ? null
-                      : () => _batch(
-                          'mark_season_watched',
-                          'Mark released episodes watched?',
-                          season: selected!.id,
-                        ),
-                  child: const Text('Mark season watched'),
-                ),
-                if (tracked.intent != null)
-                  TextButton(
-                    onPressed: _loading || widget.pending
-                        ? null
-                        : () => _batch(
-                            'mark_season_unwatched',
-                            'Mark this season unwatched?',
-                            season: selected!.id,
-                          ),
-                    child: const Text('Mark season unwatched'),
-                  ),
-              ],
-              if (tracked.intent != null)
-                TextButton(
-                  onPressed: _loading || widget.pending
-                      ? null
-                      : () => _batch('remove_show', 'Remove show tracking?'),
-                  child: const Text('Remove show tracking'),
-                ),
-              if (['Ended','Canceled'].contains(widget.show.releaseStatus))
-                TextButton(
-                  onPressed: _loading || widget.pending
-                      ? null
-                      : () => _batch('mark_ended_show_watched', 'Mark all released episodes watched?'),
-                  child: const Text('Mark all released episodes watched'),
-                ),
-            ],
-          ),
+        if (tracked != null && released.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: Text(selected?.title ?? 'Episodes', style: theme.textTheme.titleMedium)),
+            Text('$watchedCount/${released.length} watched', style: theme.textTheme.bodySmall),
+          ]),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: watchedCount / released.length, semanticsLabel: 'Season episodes watched',
+            semanticsValue: '$watchedCount of ${released.length}'),
+        ],
+        const SizedBox(height: 8),
         for (final episode in released)
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            onTap:
-                tracked != null &&
-                    !widget.pending &&
-                    (selected?.number ?? 0) > 0
-                ? () => _batch(
-                    'mark_through',
-                    'Mark through episode ${episode.number}?',
-                    episode: episode.id,
-                  )
-                : null,
-            title: Text('E${episode.number}  ${episode.title}'),
-            subtitle: Text(
-              episode.watched
-                  ? 'Watched · ${episode.watchedOn ?? 'Date unknown'}'
-                  : 'Unwatched',
+          InkWell(
+            onTap: tracked == null || widget.pending ? null : () => _episodeSheet(episode),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                SizedBox(
+                  width: 40,
+                  child: Text('${episode.number}', textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: mutedColor)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(episode.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  Text(episode.watched ? 'Watched · ${episode.watchedOn ?? 'Date unknown'}' : 'Unwatched',
+                    style: theme.textTheme.bodySmall),
+                ])),
+                if (tracked != null)
+                  episode.watched
+                      ? IconButton(
+                          tooltip: 'Episode ${episode.number} actions',
+                          onPressed: widget.pending ? null : () => _episodeSheet(episode),
+                          icon: const Icon(PhosphorIconsFill.checkCircle, color: coralColor),
+                        )
+                      : IconButton(
+                          tooltip: 'Mark episode ${episode.number} watched',
+                          onPressed: widget.pending || !(tracked.intent != null || numbered)
+                              ? null
+                              : () => _change(episode, 'mark'),
+                          icon: const Icon(PhosphorIconsRegular.circle, color: mutedColor),
+                        ),
+              ]),
             ),
-            trailing: tracked == null || widget.pending
-                ? null
-                : episode.watched
-                ? PopupMenuButton<String>(
-                    tooltip: 'Episode actions',
-                    onSelected: (value) => _change(episode, value),
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: 'date',
-                        child: Text('Edit watch date'),
-                      ),
-                      PopupMenuItem(value: 'clear', child: Text('Clear date')),
-                      PopupMenuItem(
-                        value: 'unwatch',
-                        child: Text('Mark unwatched'),
-                      ),
-                    ],
-                  )
-                : tracked.intent != null || (selected?.number ?? 0) > 0
-                ? IconButton(
-                    tooltip: 'Mark episode ${episode.number} watched',
-                    onPressed: () => _change(episode, 'mark'),
-                    icon: const Icon(Icons.check_circle_outline),
-                  )
-                : null,
           ),
         if (upcoming.isNotEmpty) ...[
           const SizedBox(height: 16),
           Text('Upcoming', style: theme.textTheme.titleMedium),
           for (final episode in upcoming)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text('E${episode.number}  ${episode.title}'),
-              subtitle: Text(episode.releaseDay ?? 'Release date unknown'),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(children: [
+                SizedBox(width: 40, child: Text('${episode.number}', textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: mutedColor))),
+                const SizedBox(width: 8),
+                Expanded(child: Text(episode.title, style: const TextStyle(fontSize: 15))),
+                Text(episode.releaseDay ?? 'Date unknown', style: theme.textTheme.bodySmall),
+              ]),
             ),
         ],
       ],

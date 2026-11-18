@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../app/phosphor.dart';
+import '../../../app/theme.dart';
 import '../../auth/auth_cubit.dart';
 import '../../../core/backend_config.dart';
 import '../../../core/offline_store.dart';
@@ -23,7 +26,10 @@ class FollowedRecommendations extends StatelessWidget {
   Widget build(BuildContext context) {
     final account = context.watch<AccountCubit>().state;
     if (account.phase != AccountPhase.ready) return const SizedBox.shrink();
-    return _Recommendations(key: ValueKey((account.userId,titleId)), titleId: titleId);
+    return _Recommendations(
+      key: ValueKey((account.userId, titleId)),
+      titleId: titleId,
+    );
   }
 }
 
@@ -36,35 +42,68 @@ class _Recommendations extends StatefulWidget {
 }
 
 class _RecommendationsState extends State<_Recommendations> {
-  late final _rows = context.read<SocialRepository>().many('followed_recommendations', {'target':?widget.titleId});
+  late final _rows = context.read<SocialRepository>().many(
+    'followed_recommendations',
+    {'target': ?widget.titleId},
+  );
 
   @override
   Widget build(BuildContext context) => FutureBuilder(
-    future: _rows, builder: (context, snapshot) {
+    future: _rows,
+    builder: (context, snapshot) {
       final rows = snapshot.data;
       if (rows == null || rows.isEmpty) return const SizedBox.shrink();
-      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const SizedBox(height: 20),
-        Text(widget.titleId == null ? 'From people you follow' : 'Following activity',
-            style: Theme.of(context).textTheme.titleLarge),
-        for (final row in rows) ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(row['title'] as String),
-          subtitle: Text('@${row['handle']} ${switch (row['kind']) {
-              'review' => 'wrote a review', 'rating' => 'rated this ${(row['score'] as int) / 2} of 5 stars',
-              'first_show' => 'started watching', _ => 'marked watched',
-            }}'),
-          onTap: () {
-            if (row['review'] case final SocialRow review) {
-              context.push('/reviews/${review['id']}');
-            } else if (widget.titleId == null) {
-              context.push('/titles/${row['media']}/${row['tmdb_id']}');
-            } else {
-              context.push('/people/${row['actor_id']}');
-            }
-          },
-        ),
-      ]);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 24),
+          SectionHeader(
+            widget.titleId == null
+                ? 'From people you follow'
+                : 'Following activity',
+            padding: EdgeInsets.zero,
+          ),
+          Card(
+            child: Column(
+              children: [
+                for (final (index, row) in rows.indexed) ...[
+                  if (index > 0) const Divider(indent: 64),
+                  ListTile(
+                    leading: Avatar(row['handle'] as String, size: 36),
+                    title: Text(
+                      row['title'] as String,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '@${row['handle']} ${switch (row['kind']) {
+                        'review' => 'wrote a review',
+                        'rating' => 'rated it ${row['score']}/10',
+                        'first_show' => 'started watching',
+                        _ => 'watched it',
+                      }}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(PhosphorIconsRegular.caretRight),
+                    onTap: () {
+                      if (row['review'] case final SocialRow review) {
+                        context.push('/reviews/${review['id']}');
+                      } else if (widget.titleId == null) {
+                        context.push(
+                          '/titles/${row['media']}/${row['tmdb_id']}',
+                        );
+                      } else {
+                        context.push('/people/${row['actor_id']}');
+                      }
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      );
     },
   );
 }
@@ -115,10 +154,14 @@ class OpinionActions extends StatefulWidget {
     required this.title,
     required this.label,
     this.season,
+    this.external,
   });
   final String title;
   final String label;
   final String? season;
+
+  /// IMDb or TMDB score from the catalog (`details.rating`); shown instead of the community average.
+  final Map<String, dynamic>? external;
 
   @override
   State<OpinionActions> createState() => _OpinionActionsState();
@@ -145,37 +188,64 @@ class _OpinionActionsState extends State<OpinionActions> {
     final owner = context.read<AccountCubit>().state.userId;
     if (owner == null) return;
     final key = '${widget.title}:${widget.season}';
-    final draft = review ? await store.read(owner,'drafts',key).catchError((Object _) => null) as SocialRow? : null;
+    final draft = review
+        ? await store.read(owner, 'drafts', key).catchError((Object _) => null)
+              as SocialRow?
+        : null;
     if (!mounted) return;
     final result = await showModalBottomSheet<SocialRow>(
+      useRootNavigator: true,
       isScrollControlled: true,
       context: context,
-      builder: (context) =>
-          _OpinionEditor(label: widget.label, review: review, current: draft ?? value, canSaveDraft: review && store.available),
+      builder: (context) => _OpinionEditor(
+        label: widget.label,
+        review: review,
+        current: draft ?? value,
+        canSaveDraft: review && store.available,
+      ),
     );
     if (!mounted || result == null) return;
     setState(() => _saving = true);
     try {
-      var revision = (draft?['base_revision'] ?? value?['revision']) as int? ?? 0;
+      var revision =
+          (draft?['base_revision'] ?? value?['revision']) as int? ?? 0;
       if (review) {
         final latest = value?['revision'] as int? ?? 0;
         if (draft != null && result['draft'] != true && latest != revision) {
-          final replace = await showDialog<bool>(context: context, builder: (dialog) => AlertDialog(
-            title: const Text('Replace the current review?'),
-            content: const Text('The saved review changed since you started this draft.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(dialog,false), child: const Text('Keep draft')),
-              TextButton(onPressed: () => Navigator.pop(dialog,true), child: const Text('Replace review')),
-            ],
-          ));
-          if (replace == true) revision = latest;
-          else result['draft'] = true;
+          final replace = await showDialog<bool>(
+            context: context,
+            builder: (dialog) => AlertDialog(
+              title: const Text('Replace the current review?'),
+              content: const Text(
+                'The saved review changed since you started this draft.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialog, false),
+                  child: const Text('Keep draft'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(dialog, true),
+                  child: const Text('Replace review'),
+                ),
+              ],
+            ),
+          );
+          if (replace == true)
+            revision = latest;
+          else
+            result['draft'] = true;
         }
-        await store.write(owner,'drafts',key,{...result,'base_revision':revision}).catchError((Object error) {
-          if (result['draft'] == true) throw error;
-        });
+        await store
+            .write(owner, 'drafts', key, {...result, 'base_revision': revision})
+            .catchError((Object error) {
+              if (result['draft'] == true) throw error;
+            });
         if (result['draft'] == true) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Draft saved on this device')));
+          if (mounted)
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Draft saved on this device')),
+            );
           return;
         }
         await repo.saveReview(
@@ -186,7 +256,7 @@ class _OpinionActionsState extends State<OpinionActions> {
           result['audience'] as String,
           revision,
         );
-        await store.remove(owner,'drafts',key).catchError((Object _) {});
+        await store.remove(owner, 'drafts', key).catchError((Object _) {});
       } else {
         await repo.rate(
           widget.title,
@@ -222,58 +292,70 @@ class _OpinionActionsState extends State<OpinionActions> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
         FutureBuilder(
           future: _opinion,
           builder: (context, result) {
             if (result.hasError) {
-              return Wrap(children: [
-                TextButton(onPressed: _refresh, child: const Text('Could not load opinions. Retry')),
-                if (ready) TextButton(onPressed: () => _edit(null,review:true), child: const Text('Open review draft')),
-              ]);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InlineNotice(
+                    'Could not load ratings.',
+                    icon: PhosphorIconsRegular.warningCircle,
+                    action: 'Retry',
+                    onAction: _refresh,
+                  ),
+                  if (ready)
+                    TextButton(
+                      onPressed: () => _edit(null, review: true),
+                      child: const Text('Open review draft'),
+                    ),
+                ],
+              );
             }
-            if (result.connectionState != ConnectionState.done) {
-              return const LinearProgressIndicator();
-            }
+            final loading = result.connectionState != ConnectionState.done;
             final data = result.data;
             final rating = data?['my_rating'] as SocialRow?;
             final review = data?['my_review'] as SocialRow?;
-            return Column(
+            final score = rating?['score'] as int?;
+            void open({required bool asReview}) => ready
+                ? _edit(asReview ? review : rating, review: asReview)
+                : context.push('/account');
+            return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  data?['average'] != null
-                      ? 'Community · ${data!['average']} ★ (${data['rating_count']})'
-                      : 'Community · Insufficient ratings',
+                if (widget.external case final rating?) ...[
+                  Expanded(child: ExternalRatingTile(rating)),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: _StatTile(
+                    label: score == null
+                        ? 'Rate ${widget.label}'
+                        : 'Your ${widget.label} rating',
+                    value: score == null ? null : '$score',
+                    caption: score == null ? 'Tap to rate' : 'Tap to edit',
+                    star: true,
+                    onTap: _saving || loading
+                        ? null
+                        : () => open(asReview: false),
+                  ),
                 ),
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    TextButton(
-                      onPressed: _saving
-                          ? null
-                          : () => ready
-                                ? _edit(rating, review: false)
-                                : context.push('/account'),
-                      child: Text(
-                        rating?['score'] == null
-                            ? 'Rate ${widget.label}'
-                            : 'Your ${widget.label} rating · ${(rating!['score'] as int) / 2} ★',
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _saving
-                          ? null
-                          : () => ready
-                                ? _edit(review, review: true)
-                                : context.push('/account'),
-                      child: Text(
-                        review?['body'] == null
-                            ? 'Review ${widget.label}'
-                            : 'Edit ${widget.label} review',
-                      ),
-                    ),
-                  ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _StatTile(
+                    label: review?['body'] == null
+                        ? 'Review ${widget.label}'
+                        : 'Edit ${widget.label} review',
+                    icon: review?['body'] == null
+                        ? PhosphorIconsRegular.pencilSimple
+                        : PhosphorIconsFill.notePencil,
+                    caption: review?['body'] == null ? 'Write' : 'Saved',
+                    onTap: _saving || loading
+                        ? null
+                        : () => open(asReview: true),
+                  ),
                 ),
               ],
             );
@@ -283,9 +365,11 @@ class _OpinionActionsState extends State<OpinionActions> {
           future: _reviews,
           builder: (context, result) {
             if (result.hasError) {
-              return TextButton(
-                onPressed: _refresh,
-                child: const Text('Could not load reviews. Retry'),
+              return InlineNotice(
+                'Could not load reviews.',
+                icon: PhosphorIconsRegular.warningCircle,
+                action: 'Retry',
+                onAction: _refresh,
               );
             }
             final reviews = result.data ?? [];
@@ -293,21 +377,23 @@ class _OpinionActionsState extends State<OpinionActions> {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Reviews', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 16),
+                SectionHeader(
+                  'Reviews',
+                  padding: EdgeInsets.zero,
+                  onMore: reviews.length > 3
+                      ? () => context.push(
+                          Uri(
+                            path: '/review-list',
+                            queryParameters: {
+                              'title': widget.title,
+                              'season': ?widget.season,
+                            },
+                          ).toString(),
+                        )
+                      : null,
+                ),
                 for (final row in reviews.take(3)) ReviewTile(row),
-                if (reviews.length > 3)
-                  TextButton(
-                    onPressed: () => context.push(
-                      Uri(
-                        path: '/review-list',
-                        queryParameters: {
-                          'title': widget.title,
-                          'season': ?widget.season,
-                        },
-                      ).toString(),
-                    ),
-                    child: const Text('See all reviews'),
-                  ),
               ],
             );
           },
@@ -315,6 +401,192 @@ class _OpinionActionsState extends State<OpinionActions> {
       ],
     );
   }
+}
+
+/// IMDb (or TMDB fallback) score tile with the source's badge; tapping opens the IMDb page when known.
+class ExternalRatingTile extends StatelessWidget {
+  const ExternalRatingTile(this.rating, {super.key});
+  final Map<String, dynamic> rating;
+
+  static String _votes(int count) => count >= 1000000
+      ? '${(count / 1000000).toStringAsFixed(1)}M'
+      : count >= 1000
+      ? '${(count / 1000).round()}K'
+      : '$count';
+
+  @override
+  Widget build(BuildContext context) {
+    final imdb = rating['source'] == 'imdb';
+    final value = (rating['value'] as num).toStringAsFixed(1);
+    final votes = rating['votes'] as int?;
+    final imdbId = rating['imdb_id'] as String?;
+    return Semantics(
+      button: imdbId != null,
+      label:
+          '${imdb ? 'IMDb' : 'TMDB'} rating $value of 10${votes == null ? '' : ', ${_votes(votes)} votes'}',
+      excludeSemantics: true,
+      child: Material(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: imdbId == null
+              ? null
+              : () => launchUrl(
+                  Uri.https('www.imdb.com', '/title/$imdbId/'),
+                  mode: LaunchMode.externalApplication,
+                ),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Source badge in each service's own colours, like the logos people recognise.
+                Container(
+                  height: 18,
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: imdb ? const Color(0xfff5c518) : null,
+                    gradient: imdb
+                        ? null
+                        : const LinearGradient(
+                            colors: [Color(0xff90cea1), Color(0xff01b4e4)],
+                          ),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    imdb ? 'IMDb' : 'TMDB',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: imdb ? -.3 : .4,
+                      color: imdb ? Colors.black : const Color(0xff0d253f),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SizedBox(
+                  height: 28,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Text(
+                        '/10',
+                        style: TextStyle(fontSize: 12, color: mutedColor),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  votes == null
+                      ? (imdb ? 'IMDb' : 'TMDB')
+                      : '${_votes(votes)} votes',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: mutedColor),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact rating/review tile: label on top, big value or icon, small caption.
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.label,
+    this.value,
+    this.caption,
+    this.icon,
+    this.star = false,
+    this.onTap,
+  });
+  final String label;
+  final String? value;
+  final String? caption;
+  final IconData? icon;
+  final bool star;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: onTap != null,
+    label: [label, if (value != null) '$value of 10', ?caption].join(', '),
+    excludeSemantics: true,
+    child: Material(
+      color: surfaceColor,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: mutedColor,
+                ),
+              ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 28,
+                child: Row(
+                  children: [
+                    if (star)
+                      Icon(
+                        value == null
+                            ? PhosphorIconsRegular.star
+                            : PhosphorIconsFill.star,
+                        color: coralColor,
+                        size: 22,
+                      ),
+                    if (icon != null) Icon(icon, color: coralColor, size: 22),
+                    if (value != null) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        value!,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (caption != null)
+                Text(
+                  caption!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: mutedColor),
+                ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _OpinionEditor extends StatefulWidget {
@@ -343,7 +615,12 @@ class _OpinionEditorState extends State<_OpinionEditor> {
   bool _share = false;
 
   void _finish({bool draft = false}) => Navigator.pop(context, {
-    'body':_text.text.trim(),'score':_score,'spoiler':_spoiler,'audience':_audience,'share':_share,'draft':draft,
+    'body': _text.text.trim(),
+    'score': _score,
+    'spoiler': _spoiler,
+    'audience': _audience,
+    'share': _share,
+    'draft': draft,
   });
 
   @override
@@ -356,14 +633,14 @@ class _OpinionEditorState extends State<_OpinionEditor> {
   Widget build(BuildContext context) => SafeArea(
     child: SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
-        16,
-        16,
-        16,
+        24,
+        0,
+        24,
         16 + MediaQuery.viewInsetsOf(context).bottom,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             '${widget.review ? 'Review' : 'Rate'} ${widget.label}',
@@ -374,71 +651,126 @@ class _OpinionEditorState extends State<_OpinionEditor> {
             TextField(
               controller: _text,
               maxLength: 5000,
-              minLines: 3,
-              maxLines: 8,
-              decoration: const InputDecoration(labelText: 'Your review'),
+              minLines: 4,
+              maxLines: 10,
+              autofocus: _text.text.isEmpty,
+              decoration: const InputDecoration(
+                hintText: 'What did you think?',
+              ),
             ),
-            CheckboxListTile(
+            SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Contains spoilers'),
               value: _spoiler,
-              onChanged: (value) => setState(() => _spoiler = value ?? false),
+              onChanged: (value) => setState(() => _spoiler = value),
             ),
-          ] else
-            Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
+          ] else ...[
+            Semantics(
+              slider: true,
+              label: 'Rating',
+              value: _score == null ? 'No rating' : '$_score of 10',
+              increasedValue: '${((_score ?? 0) + 1).clamp(1, 10)} of 10',
+              decreasedValue: _score == null || _score == 1
+                  ? 'No rating'
+                  : '${_score! - 1} of 10',
+              onIncrease: _score == 10
+                  ? null
+                  : () => setState(() => _score = (_score ?? 0) + 1),
+              onDecrease: _score == null
+                  ? null
+                  : () => setState(
+                      () => _score = _score! == 1 ? null : _score! - 1,
+                    ),
+              // Ten stars share the row width so they fit any phone without wrapping.
+              child: ExcludeSemantics(
+                child: Row(
+                  children: [
+                    for (var star = 1; star <= 10; star++)
+                      Expanded(
+                        child: InkResponse(
+                          onTap: () => setState(() => _score = star),
+                          radius: 20,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Icon(
+                              (_score ?? 0) >= star
+                                  ? PhosphorIconsFill.star
+                                  : PhosphorIconsRegular.star,
+                              color: coralColor,
+                              size: 28,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
-                  tooltip: 'Decrease by half a star',
+                  tooltip: 'Decrease by one',
                   onPressed: _score == null
                       ? null
-                      : () => setState(() {
-                          _score = _score! == 1 ? null : _score! - 1;
-                        }),
-                  icon: const Icon(Icons.remove),
+                      : () => setState(
+                          () => _score = _score! == 1 ? null : _score! - 1,
+                        ),
+                  icon: const Icon(PhosphorIconsRegular.minus),
                 ),
-                Semantics(
-                  liveRegion: true,
+                SizedBox(
+                  width: 96,
                   child: Text(
-                    _score == null ? 'No rating' : '${_score! / 2} of 5 ★',
+                    _score == null ? 'No rating' : '$_score / 10',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Increase by half a star',
+                  tooltip: 'Increase by one',
                   onPressed: _score == 10
                       ? null
-                      : () => setState(() {
-                          _score = (_score ?? 0) + 1;
-                        }),
-                  icon: const Icon(Icons.add),
-                ),
-                TextButton(
-                  onPressed: _score == null
-                      ? null
-                      : () => setState(() => _score = null),
-                  child: const Text('Clear'),
+                      : () => setState(() => _score = (_score ?? 0) + 1),
+                  icon: const Icon(PhosphorIconsRegular.plus),
                 ),
               ],
             ),
-          DropdownButtonFormField<String>(
-            initialValue: _audience,
-            decoration: const InputDecoration(labelText: 'Audience'),
-            items: [
+            if (_score != null)
+              Center(
+                child: TextButton(
+                  onPressed: () => setState(() => _score = null),
+                  style: TextButton.styleFrom(foregroundColor: mutedColor),
+                  child: const Text('Clear rating'),
+                ),
+              ),
+          ],
+          const SizedBox(height: 8),
+          Text(
+            'Who can see this',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            showSelectedIcon: false,
+            segments: [
               for (final option in audienceLabels.entries)
-                DropdownMenuItem(value: option.key, child: Text(option.value)),
+                ButtonSegment(value: option.key, label: Text(option.value)),
             ],
-            onChanged: (value) => setState(() {
-              _audience = value!;
+            selected: {_audience},
+            onSelectionChanged: (value) => setState(() {
+              _audience = value.first;
               if (_audience == 'only_me') _share = false;
             }),
           ),
           if (!widget.review && _audience != 'only_me')
-            CheckboxListTile(
+            SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: _share,
               title: const Text('Share to Following'),
-              onChanged: (value) => setState(() => _share = value ?? false),
+              onChanged: (value) => setState(() => _share = value),
             ),
           const SizedBox(height: 16),
           FilledButton(
@@ -450,7 +782,10 @@ class _OpinionEditorState extends State<_OpinionEditor> {
             ),
           ),
           if (widget.canSaveDraft)
-            TextButton(onPressed: () => _finish(draft:true), child: const Text('Save draft on device')),
+            TextButton(
+              onPressed: () => _finish(draft: true),
+              child: const Text('Save draft on device'),
+            ),
         ],
       ),
     ),
@@ -463,25 +798,67 @@ class ReviewTile extends StatelessWidget {
   final bool showTitle;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    title: Text(
-      showTitle
-          ? '${row['title']}${row['season'] == null ? '' : ' · ${row['season']}'}'
-          : '@${row['handle']}',
-    ),
-    subtitle: Text(
-      row['protected'] == true
-          ? 'Spoilers hidden · Reveal'
-          : (row['body'] as String? ?? ''),
-      maxLines: 3,
-      overflow: TextOverflow.ellipsis,
-    ),
-    trailing: row['score'] == null
-        ? null
-        : Text('${(row['score'] as int) / 2} ★'),
-    onTap: () => context.push('/reviews/${row['id']}'),
-  );
+  Widget build(BuildContext context) {
+    final protected = row['protected'] == true;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        child: InkWell(
+          onTap: () => context.push('/reviews/${row['id']}'),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    if (!showTitle) ...[
+                      Avatar(row['handle'] as String? ?? '', size: 28),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: Text(
+                        showTitle
+                            ? '${row['title']}${row['season'] == null ? '' : ' · ${row['season']}'}'
+                            : '@${row['handle']}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    if (row['score'] case final int score) StarScore(score),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (protected)
+                  const Row(
+                    children: [
+                      Icon(
+                        PhosphorIconsRegular.eyeSlash,
+                        size: 18,
+                        color: mutedColor,
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'Spoilers hidden · Tap to reveal',
+                        style: TextStyle(color: mutedColor),
+                      ),
+                    ],
+                  )
+                else
+                  Text(
+                    row['body'] as String? ?? '',
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15, height: 1.5),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class ReviewListPage extends StatefulWidget {
@@ -671,47 +1048,97 @@ class _ReviewDetailPageState extends State<ReviewDetailPage> {
     final account = context.watch<AccountCubit>().state;
     final ready = account.phase == AccountPhase.ready;
     final data = _data;
+    final open = data != null && (_reveal || data['protected'] != true);
     return Scaffold(
-      appBar: AppBar(title: const Text('Review')),
+      appBar: AppBar(
+        title: const Text('Review'),
+        actions: [
+          if (data != null && ready)
+            PopupMenuButton<String>(
+              tooltip: 'More actions',
+              onSelected: (_) => reportSocial(context, widget.id, 'review'),
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'report', child: Text('Report')),
+              ],
+            ),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
             if (_failed)
-              TextButton(
-                onPressed: _load,
-                child: const Text('Could not open this review. Retry'),
+              InlineNotice(
+                'Could not open this review.',
+                icon: PhosphorIconsRegular.warningCircle,
+                action: 'Retry',
+                onAction: _load,
               ),
-            if (_working) const LinearProgressIndicator(),
+            if (_working)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: LinearProgressIndicator(),
+              ),
             if (!_working && !_failed && data == null)
-              const Text('This review is unavailable.'),
+              const EmptyState(
+                icon: PhosphorIconsRegular.lock,
+                title: 'Review unavailable',
+                message: 'It may have been removed or made private.',
+              ),
             if (data != null) ...[
               Text(
                 '${data['title']}${data['season'] == null ? '' : ' · ${data['season']}'}',
                 style: Theme.of(context).textTheme.displaySmall,
               ),
-              TextButton(
-                onPressed: () => context.push('/people/${data['author_id']}'),
-                child: Text('@${data['handle']}'),
+              const SizedBox(height: 16),
+              InkWell(
+                onTap: () => context.push('/people/${data['author_id']}'),
+                borderRadius: BorderRadius.circular(12),
+                child: Row(
+                  children: [
+                    Avatar(data['handle'] as String, size: 40),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '@${data['handle']}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    if (data['score'] case final int score)
+                      StarScore(score, large: true),
+                  ],
+                ),
               ),
-              if (data['score'] != null)
-                Text('${(data['score'] as int) / 2} of 5 ★'),
-              const SizedBox(height: 12),
-              if (data['protected'] == true && !_reveal)
-                OutlinedButton(
-                  onPressed: () {
-                    _reveal = true;
-                    _load();
-                  },
-                  child: const Text('Reveal spoiler'),
+              const SizedBox(height: 16),
+              if (!open)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(PhosphorIconsRegular.eyeSlash),
+                    title: const Text('This review has spoilers'),
+                    trailing: const Text(
+                      'Reveal',
+                      style: TextStyle(
+                        color: coralColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    onTap: () {
+                      _reveal = true;
+                      _load();
+                    },
+                  ),
                 )
               else if (data['body'] case final String body)
-                Text(body),
-              if (ready)
-                Wrap(
-                  children: [
+                SelectableText(
+                  body,
+                  style: const TextStyle(fontSize: 16, height: 1.6),
+                ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  if (ready)
                     TextButton.icon(
                       onPressed: _working
                           ? null
@@ -721,54 +1148,94 @@ class _ReviewDetailPageState extends State<ReviewDetailPage> {
                             }),
                       icon: Icon(
                         data['liked'] == true
-                            ? Icons.favorite
-                            : Icons.favorite_border,
+                            ? PhosphorIconsFill.heart
+                            : PhosphorIconsRegular.heart,
+                        color: data['liked'] == true ? coralColor : null,
                       ),
-                      label: Text(
-                        '${data['liked'] == true ? 'Liked' : 'Like'} · ${data['likes']}',
-                      ),
+                      label: Text('${data['likes']}'),
+                      style: TextButton.styleFrom(foregroundColor: inkColor),
                     ),
-                    if (_reveal || data['protected'] != true)
-                      TextButton(
-                        onPressed: _comment,
-                        child: const Text('Comment'),
-                      ),
-                    TextButton(
-                      onPressed: () =>
-                          reportSocial(context, widget.id, 'review'),
-                      child: const Text('Report'),
+                  if (ready && open)
+                    TextButton.icon(
+                      onPressed: _comment,
+                      icon: const Icon(PhosphorIconsRegular.chatCircle),
+                      label: const Text('Comment'),
                     ),
-                    if (data['public'] == true)
-                      TextButton(
-                        onPressed: () async {
-                          await Clipboard.setData(
-                            ClipboardData(
-                              text:
-                                  '$backendUrl/functions/v1/share/review/${widget.id}',
-                            ),
+                  const Spacer(),
+                  if (data['public'] == true)
+                    IconButton(
+                      tooltip: 'Copy link',
+                      icon: const Icon(PhosphorIconsRegular.export),
+                      onPressed: () async {
+                        await Clipboard.setData(
+                          ClipboardData(
+                            text:
+                                '$backendUrl/functions/v1/share/review/${widget.id}',
+                          ),
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Link copied')),
                           );
-                        },
-                        child: const Text('Copy link'),
-                      ),
-                  ],
-                ),
+                        }
+                      },
+                    ),
+                ],
+              ),
+              const Divider(),
               if (_comments.isNotEmpty)
-                Text('Comments', style: Theme.of(context).textTheme.titleLarge),
+                SectionHeader(
+                  'Comments · ${_comments.length}${_more ? '+' : ''}',
+                  padding: const EdgeInsets.only(top: 8),
+                ),
               for (final comment in _comments)
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text('@${comment['handle']}'),
-                  subtitle: comment['body'] == null
-                      ? TextButton(
-                          onPressed: () =>
-                              _load(revealedComment: comment['id'] as String),
-                          child: const Text('Reveal spoiler'),
-                        )
-                      : Text(comment['body'] as String),
-                  trailing: !ready
-                      ? null
-                      : PopupMenuButton<String>(
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Avatar(comment['handle'] as String, size: 32),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '@${comment['handle']}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (comment['body'] == null)
+                              TextButton(
+                                onPressed: () => _load(
+                                  revealedComment: comment['id'] as String,
+                                ),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  foregroundColor: coralColor,
+                                ),
+                                child: const Text('Reveal spoiler'),
+                              )
+                            else
+                              Text(
+                                comment['body'] as String,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  height: 1.5,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (ready)
+                        PopupMenuButton<String>(
                           tooltip: 'Comment actions',
+                          icon: const Icon(
+                            PhosphorIconsRegular.dotsThree,
+                            size: 20,
+                            color: mutedColor,
+                          ),
                           itemBuilder: (context) => [
                             if (comment['author_id'] == account.userId) ...[
                               if (comment['body'] != null)
@@ -810,9 +1277,11 @@ class _ReviewDetailPageState extends State<ReviewDetailPage> {
                             }
                           },
                         ),
+                    ],
+                  ),
                 ),
               if (_more)
-                TextButton(
+                OutlinedButton(
                   onPressed: _working ? null : () => _load(more: true),
                   child: const Text('Load more comments'),
                 ),

@@ -5,39 +5,124 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../app/phosphor.dart';
+import '../../../app/theme.dart';
 import '../../auth/auth_cubit.dart';
 import '../../catalog/data/catalog_repository.dart';
 import '../../catalog/presentation/artwork.dart';
+import '../../catalog/presentation/discover_page.dart';
 import '../data/library_repository.dart';
 import 'tracking_cubit.dart';
 
+/// Library tab: Shows (tracking + Want shows below) and Movies (Want movies) behind chips.
+class LibraryTab extends StatefulWidget {
+  const LibraryTab({super.key, this.movies = false});
+  final bool movies;
+
+  @override
+  State<LibraryTab> createState() => _LibraryTabState();
+}
+
+class _LibraryTabState extends State<LibraryTab> {
+  late int _index = widget.movies ? 1 : 0;
+  // Movies is built on first visit so opening the app costs only the Shows requests.
+  late final _visited = {_index};
+
+  @override
+  void didUpdateWidget(LibraryTab old) {
+    super.didUpdateWidget(old);
+    if (old.movies != widget.movies) {
+      _index = widget.movies ? 1 : 0;
+      _visited.add(_index);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+        child: Row(
+          children: [
+            for (final (index, label) in const [(0, 'Shows'), (1, 'Movies')])
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  label: Text(label),
+                  selected: _index == index,
+                  onSelected: (_) =>
+                      setState(() => _visited.add(_index = index)),
+                ),
+              ),
+          ],
+        ),
+      ),
+      Expanded(
+        child: IndexedStack(
+          index: _index,
+          children: [
+            const LibraryPage(section: LibrarySection.watchedShows),
+            _visited.contains(1)
+                ? const LibraryPage(
+                    section: LibrarySection.wanted,
+                    media: MediaKind.movie,
+                  )
+                : const SizedBox.shrink(),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
 class LibraryPage extends StatelessWidget {
-  const LibraryPage({super.key});
+  const LibraryPage({super.key, required this.section, this.media});
+  final LibrarySection section;
+
+  /// Fixed media filter; hides the All / Movies / Shows chips.
+  final MediaKind? media;
 
   @override
   Widget build(BuildContext context) {
     final account = context.watch<AccountCubit>().state;
     return account.phase == AccountPhase.ready
-        ? _LibraryBody(key: ValueKey(account.userId))
-        : Center(
-            child: OutlinedButton(
+        ? _LibraryBody(
+            key: ValueKey((account.userId, section, media)),
+            section: section,
+            media: media,
+          )
+        : EmptyState(
+            icon: section == LibrarySection.wanted
+                ? PhosphorIconsRegular.bookmarkSimple
+                : PhosphorIconsRegular.television,
+            title: section == LibrarySection.wanted
+                ? 'Keep a Want list'
+                : 'Track your shows',
+            message: 'Sign in to save titles and mark episodes as you watch.',
+            action: FilledButton(
               onPressed: () => context.push('/account', extra: '/library'),
-              child: const Text('Sign in to view your library'),
+              child: const Text('Sign in'),
             ),
           );
   }
 }
 
 class _LibraryBody extends StatefulWidget {
-  const _LibraryBody({super.key});
+  const _LibraryBody({super.key, required this.section, this.media});
+  final LibrarySection section;
+  final MediaKind? media;
 
   @override
   State<_LibraryBody> createState() => _LibraryBodyState();
 }
 
 class _LibraryBodyState extends State<_LibraryBody> {
-  LibrarySection _section = LibrarySection.watchedMovies;
-  MediaKind? _filter;
+  late final LibrarySection _section = widget.section;
+  late MediaKind? _filter = widget.media;
+  // Shows tab only: Want shows listed under the tracked ones; the filter sheet can hide them.
+  bool _showWant = true;
+  List<LibraryEntry> _wantShows = [];
+  LibraryEntry? _wantCursor;
   LibrarySort _sort = LibrarySort.activity;
   String? _genre;
   String? _status;
@@ -58,7 +143,9 @@ class _LibraryBodyState extends State<_LibraryBody> {
   @override
   void initState() {
     super.initState();
-    _changes = context.read<LibraryRepository>().changes.listen((_) => unawaited(_load()));
+    _changes = context.read<LibraryRepository>().changes.listen(
+      (_) => unawaited(_load()),
+    );
     _load();
   }
 
@@ -88,11 +175,25 @@ class _LibraryBodyState extends State<_LibraryBody> {
         status: _status,
         minimumRating: _minimumRating,
       );
+      final want =
+          _section == LibrarySection.watchedShows && _showWant && !append
+          ? await repo.list(LibrarySection.wanted, media: MediaKind.show)
+          : null;
       if (!mounted || generation != _generation) return;
       setState(() {
+        if (want != null) {
+          _wantShows = want.entries;
+          _wantCursor = want.cursor;
+        } else if (!_showWant) {
+          _wantShows = [];
+          _wantCursor = null;
+        }
         if (append) {
           final seen = _rows.map((row) => row.title.id).toSet();
-          _rows = [..._rows, ...page.entries.where((entry) => seen.add(entry.title.id))];
+          _rows = [
+            ..._rows,
+            ...page.entries.where((entry) => seen.add(entry.title.id)),
+          ];
         } else {
           _rows = page.entries;
         }
@@ -106,6 +207,29 @@ class _LibraryBodyState extends State<_LibraryBody> {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
       }
+    }
+  }
+
+  Future<void> _moreWant() async {
+    try {
+      final page = await context.read<LibraryRepository>().list(
+        LibrarySection.wanted,
+        media: MediaKind.show,
+        after: _wantCursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        final seen = _wantShows.map((row) => row.title.id).toSet();
+        _wantShows = [
+          ..._wantShows,
+          ...page.entries.where((entry) => seen.add(entry.title.id)),
+        ];
+        _wantCursor = page.cursor;
+      });
+    } on Exception catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(trackingMessage(error))));
     }
   }
 
@@ -123,8 +247,21 @@ class _LibraryBodyState extends State<_LibraryBody> {
     try {
       var command = _pending[key];
       if (command == null) {
-        final snapshot = entry.progress ?? await repo.snapshot(id);
+        var snapshot = entry.progress ?? await repo.snapshot(id);
+        // The next episode may sit in a season that was never opened; load it, then re-read progress.
+        if (action == 'set_episode_watched' &&
+            snapshot.next == null &&
+            snapshot.pendingSeason != null) {
+          await context.read<CatalogRepository>().hydrateSeason(
+            entry.title.tmdbId,
+            snapshot.pendingSeason!,
+          );
+          snapshot = await repo.snapshot(id);
+        }
         if (!mounted) return;
+        if (action == 'set_episode_watched' && snapshot.next == null) {
+          throw const TrackingFailure('No released episode left to mark.');
+        }
         command = TrackingCommand(id, action, switch (action) {
           'set_episode_watched' => {
             'episode_id': snapshot.next!.id,
@@ -149,6 +286,33 @@ class _LibraryBodyState extends State<_LibraryBody> {
       final result = await repo.apply(command);
       _pending.remove(key);
       if (!mounted) return;
+      if (action == 'set_episode_watched') {
+        // Quiet one-tap mark: update the counter in place; the change stream reorders the list.
+        setState(
+          () => _rows = [
+            for (final row in _rows)
+              row.title.id == id
+                  ? (
+                      title: row.title,
+                      activityAt: row.activityAt,
+                      progress: result.state,
+                      sortText: row.sortText,
+                      sortValue: row.sortValue,
+                      rating: row.rating,
+                      watchedOn: row.watchedOn,
+                    )
+                  : row,
+          ],
+        );
+        if (result.state.syncStatus == 'pending') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Saved on this device. Pending sync.'),
+            ),
+          );
+        }
+        return;
+      }
       await _load();
       if (!mounted) return;
       final undo = TrackingCommand(id, 'undo', {
@@ -156,12 +320,16 @@ class _LibraryBodyState extends State<_LibraryBody> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result.state.syncStatus == 'pending' ? 'Change saved on this device. Pending sync.' : switch (action) {
-            'set_episode_watched' => 'Episode marked watched',
-            'start_show' => 'Started watching',
-            'set_wanted' => 'Removed from Wanted',
-            _ => 'Marked watched',
-          }),
+          content: Text(
+            result.state.syncStatus == 'pending'
+                ? 'Change saved on this device. Pending sync.'
+                : switch (action) {
+                    'set_episode_watched' => 'Episode marked watched',
+                    'start_show' => 'Started watching',
+                    'set_wanted' => 'Removed from Want',
+                    _ => 'Marked watched',
+                  },
+          ),
           action: result.canUndo
               ? SnackBarAction(
                   label: 'Undo',
@@ -201,71 +369,162 @@ class _LibraryBodyState extends State<_LibraryBody> {
     }
   }
 
-  void _select(LibrarySection section) {
-    if (_section == section) return;
-    setState(() {
-      _section = section;
-      _sort = LibrarySort.activity;
-      _genre = null;
-      _status = null;
-      _minimumRating = null;
-      _rows = [];
-      _more = false;
-    });
-    _load();
-  }
-
   Future<void> _sortAndFilter() async {
     var sort = _sort;
     var genre = _genre;
     var status = _status;
     var minimum = _minimumRating;
+    var showWant = _showWant;
     final movie = _section == LibrarySection.watchedMovies;
     final show = _section == LibrarySection.watchedShows;
-    final applied = await showModalBottomSheet<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(builder: (context, update) => SafeArea(
-        child: SingleChildScrollView(padding: const EdgeInsets.all(16), child: Column(
-          mainAxisSize: MainAxisSize.min,
+    Widget chips<T>(
+      String label,
+      List<(T, String)> options,
+      T value,
+      void Function(T) pick,
+    ) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            DropdownButtonFormField<LibrarySort>(initialValue: sort, decoration: const InputDecoration(labelText: 'Sort by'),
-              items: [
-                for (final (mode,label) in [
-                  (LibrarySort.activity, !show && !movie ? 'Newest added' : 'Recent activity'),
-                  (LibrarySort.title, 'Title'),
-                  if (movie) (LibrarySort.viewing, 'Last viewing date'),
-                  if (show || movie) (LibrarySort.rating, 'Personal rating'),
-                  if (!show && !movie) (LibrarySort.release, 'Newest release'),
-                ]) DropdownMenuItem(value: mode, child: Text(label)),
-              ], onChanged: (value) => update(() => sort = value ?? LibrarySort.activity)),
-            if (movie) ...[
-              DropdownButtonFormField<String>(initialValue: genre ?? '', decoration: const InputDecoration(labelText: 'Genre'),
-                items: [for (final item in const ['', 'Action', 'Adventure', 'Animation', 'Comedy', 'Crime', 'Documentary',
-                  'Drama', 'Family', 'Fantasy','History','Horror','Music','Mystery','Romance','Science Fiction','Thriller','War','Western'])
-                    DropdownMenuItem(value: item, child: Text(item.isEmpty ? 'Any genre' : item))],
-                onChanged: (value) => update(() => genre = value == '' ? null : value)),
-              DropdownButtonFormField<int>(initialValue: minimum ?? 0, decoration: const InputDecoration(labelText: 'Minimum personal rating'),
-                items: [for (var score = 0; score <= 10; score++)
-                  DropdownMenuItem(value: score,child: Text(score == 0 ? 'Any rating' : '${score / 2} stars'))],
-                onChanged: (value) => update(() => minimum = value == 0 ? null : value)),
-            ],
-            if (show)
-              DropdownButtonFormField<String>(initialValue: status ?? '', decoration: const InputDecoration(labelText: 'Tracking status'),
-                items: [for (final (value,label) in const [('', 'All statuses'), ('watching','Watching'), ('completed','Completed'),
-                  ('on_hold','On Hold'),('dropped','Dropped')]) DropdownMenuItem(value: value, child: Text(label))],
-                onChanged: (value) => update(() => status = value == '' ? null : value)),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: () => Navigator.pop(context,true), child: const Text('Apply')),
-            TextButton(onPressed: () {
-              sort = LibrarySort.activity;
-              genre = null;
-              status = null;
-              minimum = null;
-              Navigator.pop(context,true);
-            }, child: const Text('Reset filters')),
+            for (final (option, text) in options)
+              ChoiceChip(
+                label: Text(text),
+                selected: option == value,
+                onSelected: (_) => pick(option),
+              ),
           ],
-        )),
-      )),
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+    final applied = await showModalBottomSheet<bool>(
+      useRootNavigator: true,
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, update) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Sort and filter',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 24),
+                chips<LibrarySort>(
+                  'Sort by',
+                  [
+                    (
+                      LibrarySort.activity,
+                      !show && !movie ? 'Newest added' : 'Recent activity',
+                    ),
+                    (LibrarySort.title, 'Title'),
+                    if (movie) (LibrarySort.viewing, 'Last viewing'),
+                    if (show || movie) (LibrarySort.rating, 'My rating'),
+                    if (!show && !movie)
+                      (LibrarySort.release, 'Newest release'),
+                  ],
+                  sort,
+                  (value) => update(() => sort = value),
+                ),
+                if (show)
+                  chips<String?>(
+                    'Status',
+                    const [
+                      (null, 'All'),
+                      ('watching', 'Watching'),
+                      ('completed', 'Completed'),
+                      ('on_hold', 'On Hold'),
+                      ('dropped', 'Dropped'),
+                    ],
+                    status,
+                    (value) => update(() => status = value),
+                  ),
+                if (show) ...[
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Show Want list'),
+                    subtitle: const Text(
+                      'Shows you saved for later, below your tracked shows',
+                    ),
+                    value: showWant,
+                    onChanged: (value) => update(() => showWant = value),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                if (movie) ...[
+                  chips<int?>(
+                    'My rating',
+                    [
+                      (null, 'Any'),
+                      for (final score in [6, 7, 8, 9]) (score, '$score+'),
+                    ],
+                    minimum,
+                    (value) => update(() => minimum = value),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: genre ?? '',
+                    decoration: const InputDecoration(labelText: 'Genre'),
+                    items: [
+                      for (final item in const [
+                        '',
+                        'Action',
+                        'Adventure',
+                        'Animation',
+                        'Comedy',
+                        'Crime',
+                        'Documentary',
+                        'Drama',
+                        'Family',
+                        'Fantasy',
+                        'History',
+                        'Horror',
+                        'Music',
+                        'Mystery',
+                        'Romance',
+                        'Science Fiction',
+                        'Thriller',
+                        'War',
+                        'Western',
+                      ])
+                        DropdownMenuItem(
+                          value: item,
+                          child: Text(item.isEmpty ? 'Any genre' : item),
+                        ),
+                    ],
+                    onChanged: (value) =>
+                        update(() => genre = value == '' ? null : value),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Apply'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    sort = LibrarySort.activity;
+                    genre = null;
+                    status = null;
+                    minimum = null;
+                    showWant = true;
+                    Navigator.pop(context, true);
+                  },
+                  child: const Text('Reset'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
     if (!mounted || applied != true) return;
     setState(() {
@@ -273,96 +532,226 @@ class _LibraryBodyState extends State<_LibraryBody> {
       _genre = genre;
       _status = status;
       _minimumRating = minimum;
+      _showWant = showWant;
       _rows = [];
       _more = false;
     });
     await _load();
   }
 
-  Widget _row(LibraryEntry entry) {
+  bool get _filtered =>
+      _genre != null ||
+      _status != null ||
+      _minimumRating != null ||
+      _filter != widget.media;
+
+  /// Behind = a released episode is still unwatched (possibly in a season not loaded yet).
+  bool _behind(TrackingState? progress) =>
+      progress != null &&
+      (progress.next != null ||
+          (progress.intent == 'watching' && progress.pendingSeason != null));
+
+  /// Bingers-style show row: next episode, 30/35 counter and a one-tap check for the next one.
+  Widget _showRow(LibraryEntry entry, {required bool dimmed}) {
     final title = entry.title;
     final progress = entry.progress;
     final next = progress?.next;
-    final wanted = _section == LibrarySection.wanted;
+    final pending = next == null ? progress?.pendingSeason : null;
+    final canMark = _behind(progress);
     final busy = _busy.contains(title.id);
-    final upcoming =
-        title.releaseDay?.isAfter(DateUtils.dateOnly(DateTime.now())) ?? false;
+    final value = progress == null || progress.released == 0
+        ? null
+        : progress.watched / progress.released;
+    final subtitle = next != null
+        ? 'S${next.season} E${next.number} · ${next.title}'
+        : pending != null
+        ? 'Season $pending · next episode'
+        : [
+            ?progress?.statusLabel,
+            if (progress?.upcomingDay case final day?) 'Next $day',
+          ].join(' · ');
+    final row = Card(
+      child: InkWell(
+        onTap: () => _open(title),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              SizedBox(width: 56, height: 84, child: Artwork(title.poster)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    if (subtitle.isNotEmpty)
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: canMark ? inkColor : mutedColor,
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: value == null
+                              ? const SizedBox.shrink()
+                              : LinearProgressIndicator(
+                                  value: value,
+                                  color: dimmed ? mutedColor : coralColor,
+                                  semanticsLabel: 'Episodes watched',
+                                  semanticsValue:
+                                      '${progress!.watched} of ${progress.released}',
+                                ),
+                        ),
+                        const SizedBox(width: 10),
+                        if (progress != null)
+                          Text(
+                            '${progress.watched}/${progress.released}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (canMark)
+                IconButton.filled(
+                  tooltip: next != null
+                      ? 'Mark S${next.season}E${next.number} ${next.title} watched'
+                      : 'Mark next episode watched',
+                  onPressed: busy
+                      ? null
+                      : () => _track(entry, 'set_episode_watched'),
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(40, 40),
+                    fixedSize: const Size(40, 40),
+                    padding: EdgeInsets.zero,
+                  ),
+                  icon: busy
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: onCoralColor,
+                          ),
+                        )
+                      : const Icon(PhosphorIconsBold.check, size: 20),
+                )
+              else
+                const SizedBox(
+                  width: 48,
+                  child: Icon(
+                    PhosphorIconsRegular.checks,
+                    size: 20,
+                    color: mutedColor,
+                    semanticLabel: 'Up to date',
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: SizedBox(
-              width: 48,
-              height: 72,
-              child: Artwork(title.poster),
-            ),
-            title: Text(title.name),
-            subtitle: Text(
-              [
-                title.caption,
-                if (entry.rating case final stars?) '${stars / 2} ★',
-                ?entry.watchedOn,
-                if (!wanted && progress?.statusLabel != null)
-                  progress!.statusLabel!,
-                if (!wanted && progress != null)
-                  '${progress.watched} of ${progress.released} known episodes',
-                if (!wanted && next == null && progress?.upcomingDay != null)
-                  'Next release · ${progress!.upcomingDay}',
-              ].join(' · '),
-            ),
-            onTap: () => _open(title),
-            trailing: wanted
-                ? PopupMenuButton<String>(
-                    tooltip: 'Wanted actions',
+      padding: const EdgeInsets.only(bottom: 8),
+      child: dimmed ? Opacity(opacity: .55, child: row) : row,
+    );
+  }
+
+  /// Want and movie list row: poster, release info, one quick action and the overflow menu.
+  Widget _row(LibraryEntry entry, {bool want = false}) {
+    final title = entry.title;
+    final progress = entry.progress;
+    final wanted = want || _section == LibrarySection.wanted;
+    final busy = _busy.contains(title.id);
+    final release = title.releaseDay;
+    final upcoming =
+        release?.isAfter(DateUtils.dateOnly(DateTime.now())) ?? false;
+    final meta = [
+      title.caption,
+      if (wanted && upcoming)
+        'Out ${MaterialLocalizations.of(context).formatShortDate(release!)}',
+      if (entry.rating case final stars?) '★ $stars',
+      ?entry.watchedOn,
+    ].join(' · ');
+    Widget? action;
+    if (wanted && title.kind == MediaKind.movie && !upcoming) {
+      action = IconButton.filledTonal(
+        tooltip: 'Mark ${title.name} watched',
+        onPressed: busy ? null : () => _track(entry, 'mark_movie_watched'),
+        icon: const Icon(PhosphorIconsBold.check),
+      );
+    } else if (wanted && (progress?.released ?? 0) > 0) {
+      action = IconButton.filledTonal(
+        tooltip: 'Start watching ${title.name}',
+        onPressed: busy ? null : () => _track(entry, 'start_show'),
+        icon: const Icon(PhosphorIconsFill.play),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        child: InkWell(
+          onTap: () => _open(title),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                SizedBox(width: 56, height: 84, child: Artwork(title.poster)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      if (meta.isNotEmpty)
+                        Text(
+                          meta,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                    ],
+                  ),
+                ),
+                if (action != null) ...[const SizedBox(width: 8), action],
+                if (wanted)
+                  PopupMenuButton<String>(
+                    tooltip: 'Want actions',
                     enabled: !busy,
                     onSelected: (_) => _track(entry, 'set_wanted'),
                     itemBuilder: (context) => const [
                       PopupMenuItem(
                         value: 'remove',
-                        child: Text('Remove from Wanted'),
+                        child: Text('Remove from Want'),
                       ),
                     ],
-                  )
-                : null,
+                  ),
+              ],
+            ),
           ),
-          if (!wanted && next != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 16),
-              child: Wrap(
-                spacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () => _open(title),
-                    child: Text(
-                      'Next · S${next.season}E${next.number} ${next.title}',
-                    ),
-                  ),
-                  OutlinedButton(
-                    onPressed: busy
-                        ? null
-                        : () => _track(entry, 'set_episode_watched'),
-                    child: const Text('Mark watched'),
-                  ),
-                ],
-              ),
-            ),
-          if (wanted && title.kind == MediaKind.movie && !upcoming)
-            OutlinedButton(
-              onPressed: busy
-                  ? null
-                  : () => _track(entry, 'mark_movie_watched'),
-              child: const Text('Mark watched'),
-            ),
-          if (wanted && (progress?.released ?? 0) > 0)
-            OutlinedButton(
-              onPressed: busy ? null : () => _track(entry, 'start_show'),
-              child: const Text('Start watching'),
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -370,169 +759,220 @@ class _LibraryBodyState extends State<_LibraryBody> {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.textScalerOf(context).scale(16) <= 21;
+    final shows = _section == LibrarySection.watchedShows;
+    final continuing = _rows.where((entry) => _behind(entry.progress)).toList();
+    final others = _rows.where((entry) => !_behind(entry.progress)).toList();
+    final sheetFilters =
+        _genre != null ||
+        _status != null ||
+        _minimumRating != null ||
+        !_showWant;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
+          Row(
             children: [
-              for (final (section, label) in const [
-                (LibrarySection.watchedMovies, 'Watched Movies'),
-                (LibrarySection.watchedShows, 'Watched Shows'),
-                (LibrarySection.wanted, 'Wanted'),
-              ])
-                ChoiceChip(
-                  label: Text(label),
-                  selected: section == _section,
-                  onSelected: (_) => _select(section),
+              if (_section == LibrarySection.wanted && widget.media == null)
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final (kind, label) in const [
+                          (null, 'All'),
+                          (MediaKind.movie, 'Movies'),
+                          (MediaKind.show, 'Shows'),
+                        ])
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: ChoiceChip(
+                              label: Text(label),
+                              selected: _filter == kind,
+                              onSelected: (_) {
+                                setState(() {
+                                  _filter = kind;
+                                  _rows = [];
+                                  _more = false;
+                                });
+                                _load();
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                Expanded(
+                  child: Text(
+                    shows
+                        ? (_rows.isEmpty
+                              ? ''
+                              : '${continuing.length} to watch · ${others.length} up to date')
+                        : (_rows.isEmpty
+                              ? ''
+                              : '${_rows.length}${_more ? '+' : ''} ${_section == LibrarySection.wanted ? 'to watch' : 'movies'}'),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              IconButton(
+                tooltip: sheetFilters
+                    ? 'Sort and filter, filters active'
+                    : 'Sort and filter',
+                onPressed: _sortAndFilter,
+                icon: Badge(
+                  isLabelVisible: sheetFilters,
+                  smallSize: 8,
+                  backgroundColor: coralColor,
+                  child: const Icon(PhosphorIconsRegular.slidersHorizontal),
+                ),
+              ),
+              if (_section == LibrarySection.watchedMovies)
+                IconButton(
+                  tooltip: _grid ? 'Show as list' : 'Show as grid',
+                  onPressed: () => setState(() => _grid = !_grid),
+                  icon: Icon(
+                    _grid
+                        ? PhosphorIconsRegular.rows
+                        : PhosphorIconsRegular.squaresFour,
+                  ),
                 ),
             ],
           ),
-          const SizedBox(height: 12),
-          Align(alignment: Alignment.centerRight,
-            child: TextButton.icon(onPressed: _sortAndFilter,
-              icon: const Icon(Icons.tune), label: const Text('Sort and filter'))),
-          if (_section == LibrarySection.wanted)
-            Wrap(
-              spacing: 8,
-              children: [
-                for (final (kind, label) in const [
-                  (null, 'All'),
-                  (MediaKind.movie, 'Movies'),
-                  (MediaKind.show, 'Shows'),
-                ])
-                  ChoiceChip(
-                    label: Text(label),
-                    selected: _filter == kind,
-                    onSelected: (_) {
-                      setState(() {
-                        _filter = kind;
-                        _rows = [];
-                        _more = false;
-                      });
-                      _load();
-                    },
-                  ),
-              ],
+          if (_loading && _rows.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: LinearProgressIndicator(),
             ),
-          if (_section == LibrarySection.watchedMovies)
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: () => setState(() => _grid = !_grid),
-                icon: Icon(
-                  _grid ? Icons.view_list_outlined : Icons.grid_view_outlined,
-                ),
-                label: Text(_grid ? 'List view' : 'Grid view'),
-              ),
+          if (_offline)
+            const InlineNotice(
+              'Offline · showing saved library',
+              icon: PhosphorIconsRegular.cloudSlash,
             ),
-          if (_loading) const LinearProgressIndicator(),
-          if (_offline) const Text('Offline · showing saved library'),
-          if (_waiting.isNotEmpty)
-            Text('${_waiting.where((item) => !item.conflict).length} changes pending sync'),
+          if (_waiting.any((item) => !item.conflict))
+            InlineNotice(
+              '${_waiting.where((item) => !item.conflict).length} changes pending sync',
+              icon: PhosphorIconsRegular.arrowsClockwise,
+            ),
           for (final item in _waiting.where((item) => item.conflict))
-            ListTile(
-              title: const Text('An offline tracking change needs attention'),
-              onTap: () => context.push('/shared-title/${item.command.titleId}'),
-              trailing: TextButton(
-                onPressed: () => context.read<LibraryRepository>().discardConflict(item.command.titleId),
-                child: const Text('Dismiss'),
-              ),
+            InlineNotice(
+              'An offline change needs attention',
+              icon: PhosphorIconsRegular.warning,
+              action: 'Review',
+              onAction: () =>
+                  context.push('/shared-title/${item.command.titleId}'),
             ),
           if (_failed)
-            TextButton(
-              onPressed: _load,
-              child: const Text('Could not load library. Retry'),
+            InlineNotice(
+              'Could not load.',
+              icon: PhosphorIconsRegular.warningCircle,
+              action: 'Retry',
+              onAction: _load,
             ),
-          if (!_loading && !_failed && _rows.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 32),
-              child: Column(
-                children: [
-                  Text(switch (_section) {
-                    LibrarySection.watchedMovies => 'No watched movies yet.',
-                    LibrarySection.watchedShows => 'No tracked shows yet.',
-                    LibrarySection.wanted => 'Nothing in Wanted yet.',
-                  }),
-                  if (_genre != null || _status != null || _minimumRating != null || _filter != null)
-                    TextButton(onPressed: () {
-                      setState(() { _filter = null; _genre = null; _status = null; _minimumRating = null; });
-                      _load();
-                    }, child: const Text('Clear filters')),
-                  TextButton(
-                    onPressed: () => context.push('/search'),
-                    child: const Text('Search titles'),
-                  ),
-                ],
-              ),
+          if (!_loading && !_failed && _rows.isEmpty && _wantShows.isEmpty)
+            EmptyState(
+              icon: switch (_section) {
+                LibrarySection.watchedMovies => PhosphorIconsRegular.filmSlate,
+                LibrarySection.watchedShows => PhosphorIconsRegular.television,
+                LibrarySection.wanted => PhosphorIconsRegular.bookmarkSimple,
+              },
+              title: _filtered
+                  ? 'Nothing matches'
+                  : switch (_section) {
+                      LibrarySection.watchedMovies => 'No watched movies yet',
+                      LibrarySection.watchedShows => 'No shows yet',
+                      LibrarySection.wanted =>
+                        widget.media == MediaKind.movie
+                            ? 'No movies in Want yet'
+                            : 'Nothing in Want yet',
+                    },
+              message: _filtered
+                  ? 'Try clearing the filters.'
+                  : shows
+                  ? 'Tap + to find a show and start tracking it episode by episode.'
+                  : 'Tap + to find something to watch later.',
+              action: _filtered
+                  ? OutlinedButton(
+                      onPressed: () {
+                        setState(() {
+                          _filter = widget.media;
+                          _genre = null;
+                          _status = null;
+                          _minimumRating = null;
+                        });
+                        _load();
+                      },
+                      child: const Text('Clear filters'),
+                    )
+                  : FilledButton.icon(
+                      onPressed: () => showSearchSheet(context),
+                      icon: const Icon(PhosphorIconsBold.plus),
+                      label: const Text('Add a title'),
+                    ),
             ),
           if (_section == LibrarySection.watchedMovies && _grid && compact)
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 140,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 16,
-                childAspectRatio: .48,
+                childAspectRatio: .5,
               ),
               itemCount: _rows.length,
               itemBuilder: (context, index) {
-                final title = _rows[index].title;
-                return InkWell(
-                  onTap: () => _open(title),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: Artwork(title.poster)),
-                      const SizedBox(height: 4),
-                      Text(
-                        title.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
+                final entry = _rows[index];
+                return PosterCard(
+                  poster: entry.title.poster,
+                  title: entry.title.name,
+                  caption: entry.watchedOn ?? entry.title.caption,
+                  badge: entry.rating == null ? null : '${entry.rating}',
+                  onTap: () => _open(entry.title),
                 );
               },
             )
-          else if (_section == LibrarySection.watchedShows &&
-              _rows.isNotEmpty) ...[
-            if (_rows.any((entry) => entry.progress?.next != null)) ...[
-              Text(
-                'Continue Watching',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              for (final entry in _rows.where(
-                (entry) => entry.progress?.next != null,
-              ))
-                _row(entry),
-            ],
-            if (_rows.any((entry) => entry.progress?.next == null)) ...[
-              const SizedBox(height: 16),
-              Text(
-                'All other tracked shows',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              for (final entry in _rows.where(
-                (entry) => entry.progress?.next == null,
-              ))
-                _row(entry),
-            ],
-          ] else
+          else if (!shows)
             for (final entry in _rows) _row(entry),
+          // Shows: catching up first, then Want, and finished ("Up to date") shows last.
+          if (shows)
+            for (final entry in continuing) _showRow(entry, dimmed: false),
+          if (shows && _showWant && _wantShows.isNotEmpty) ...[
+            SectionHeader(
+              'Want · ${_wantShows.length}${_wantCursor != null ? '+' : ''}',
+              padding: EdgeInsets.only(
+                top: continuing.isEmpty ? 0 : 24,
+                bottom: 4,
+              ),
+            ),
+            for (final entry in _wantShows) _row(entry, want: true),
+            if (_wantCursor != null)
+              OutlinedButton(
+                onPressed: _moreWant,
+                child: const Text('Load more'),
+              ),
+          ],
+          if (shows && others.isNotEmpty) ...[
+            if (continuing.isNotEmpty || (_showWant && _wantShows.isNotEmpty))
+              const SectionHeader(
+                'Up to date',
+                padding: EdgeInsets.only(top: 24, bottom: 4),
+              ),
+            for (final entry in others) _showRow(entry, dimmed: true),
+          ],
           if (_more)
-            TextButton(
-              onPressed: _loading ? null : () => _load(append: true),
-              child: const Text('Load more'),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: OutlinedButton(
+                onPressed: _loading ? null : () => _load(append: true),
+                child: const Text('Load more'),
+              ),
             ),
         ],
       ),
     );
   }
 }
-

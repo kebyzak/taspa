@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:http/http.dart' as http;
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -7,6 +10,12 @@ import 'package:uuid/uuid.dart';
 import '../../../core/backend_config.dart';
 
 typedef SocialRow = Map<String, dynamic>;
+
+class ImportFailure implements Exception {
+  const ImportFailure(this.code, this.retryAfter);
+  final String code;
+  final int? retryAfter;
+}
 
 class SocialRepository {
   SocialRepository(this.client);
@@ -22,11 +31,18 @@ class SocialRepository {
   ]) async =>
       ((await _api.rpc(name, params: params)) as List).cast<SocialRow>();
 
+  final _changed = StreamController<void>.broadcast();
+
+  /// Fires after any successful write (rating, review, follow, profile) so open pages reload.
+  Stream<void> get changes => _changed.stream;
+  void notifyChanged() => _changed.add(null);
+
   Future<void> change(String name, SocialRow params) async {
     await _api.rpc(name, params: params);
+    _changed.add(null);
   }
 
-  Map<String,String> get avatarHeaders => {
+  Map<String, String> get avatarHeaders => {
     'apikey': publishableKey,
     if (client.auth.currentSession case final session?)
       'Authorization': 'Bearer ${session.accessToken}',
@@ -35,9 +51,42 @@ class SocialRepository {
   Future<void> changeAvatar(Uint8List? png) async {
     final endpoint = Uri.parse('$backendUrl/functions/v1/avatar');
     final response = png == null
-      ? await http.delete(endpoint, headers: avatarHeaders)
-      : await http.post(endpoint, headers: {...avatarHeaders, 'Content-Type': 'image/png'}, body: png);
-    if (response.statusCode != 200) throw const FormatException('Avatar update is unavailable.');
+        ? await http.delete(endpoint, headers: avatarHeaders)
+        : await http.post(
+            endpoint,
+            headers: {...avatarHeaders, 'Content-Type': 'image/png'},
+            body: png,
+          );
+    if (response.statusCode != 200)
+      throw const FormatException('Avatar update is unavailable.');
+  }
+
+  /// Latest Must import of this account, or null if there was none.
+  Future<SocialRow?> importStatus() => one('import_status');
+
+  /// Starts (`username` set) or continues a Must import. Throws [ImportFailure] with the server code.
+  Future<SocialRow> importMust({String? username}) async {
+    final response = await http
+        .post(
+          Uri.parse('$backendUrl/functions/v1/must-import'),
+          headers: {...avatarHeaders, 'Content-Type': 'application/json'},
+          body: jsonEncode(
+            username == null
+                ? {'action': 'step'}
+                : {'action': 'start', 'username': username},
+          ),
+        )
+        .timeout(const Duration(seconds: 60));
+    final body = response.body.isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(response.body) as SocialRow;
+    if (response.statusCode != 200) {
+      throw ImportFailure(
+        body['code'] as String? ?? 'import_unavailable',
+        body['retry_after'] as int?,
+      );
+    }
+    return body;
   }
 
   Future<List<SocialRow>> findPeople(String query) async {
@@ -105,4 +154,3 @@ class SocialRepository {
     'discussion': const Uuid().v4(),
   });
 }
-

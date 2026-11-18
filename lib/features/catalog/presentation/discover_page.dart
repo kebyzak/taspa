@@ -3,35 +3,72 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 
+import '../../../app/phosphor.dart';
+import '../../../app/theme.dart';
+import '../../auth/auth_cubit.dart';
+import '../../library/data/library_repository.dart';
+import '../../library/presentation/tracking_cubit.dart';
 import '../../social/presentation/reviews.dart';
 import '../data/catalog_repository.dart';
 import 'artwork.dart';
 import 'catalog_cubit.dart';
 
+String catalogHeading(MediaKind kind, BrowseShelf shelf) => '${switch (shelf) {
+  BrowseShelf.trending => 'Trending', BrowseShelf.popular => 'Popular',
+  BrowseShelf.recent => 'New', BrowseShelf.upcoming => 'Upcoming',
+}} ${kind == MediaKind.movie ? 'Movies' : 'Shows'}';
+
 class DiscoverPage extends StatelessWidget {
   const DiscoverPage({super.key});
 
+  // Shelf order: what is hot, what is coming, then evergreen.
+  static const _shelves = [
+    (BrowseShelf.trending, MediaKind.movie), (BrowseShelf.trending, MediaKind.show),
+    (BrowseShelf.upcoming, MediaKind.movie), (BrowseShelf.recent, MediaKind.show),
+    (BrowseShelf.popular, MediaKind.movie), (BrowseShelf.popular, MediaKind.show),
+    (BrowseShelf.recent, MediaKind.movie), (BrowseShelf.upcoming, MediaKind.show),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final shelves = [for (final shelf in BrowseShelf.values)
-      for (final kind in MediaKind.values) (shelf,kind)];
+    final ready = context.watch<AccountCubit>().state.phase == AccountPhase.ready;
     return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 24),
-      itemCount: shelves.length + 1,
-      itemBuilder: (context,index) {
+      padding: const EdgeInsets.only(bottom: 32),
+      itemCount: _shelves.length + 1,
+      itemBuilder: (context, index) {
         if (index == 0) {
-          return Padding(
-          padding: const EdgeInsets.fromLTRB(16,8,16,24),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const _SearchShortcut(),
-            TextButton(onPressed: () => context.push('/genres'), child: const Text('Browse genres')),
-            const FollowedRecommendations(),
-          ]),
-          );
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Semantics(
+                button: true,
+                label: 'Search titles, credits and people',
+                excludeSemantics: true,
+                child: Material(
+                  color: surfaceColor,
+                  borderRadius: BorderRadius.circular(12),
+                  child: InkWell(
+                    onTap: () => showSearchSheet(context),
+                    borderRadius: BorderRadius.circular(12),
+                    child: const SizedBox(height: 52, child: Row(children: [
+                      SizedBox(width: 16),
+                      Icon(PhosphorIconsRegular.magnifyingGlass, color: mutedColor),
+                      SizedBox(width: 12),
+                      Text('Movies, shows, people', style: TextStyle(color: mutedColor)),
+                    ])),
+                  ),
+                ),
+              ),
+            ),
+            if (ready) const _ForYou(),
+            const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: FollowedRecommendations()),
+            const SizedBox(height: 24),
+          ]);
         }
-        final (shelf,kind) = shelves[index - 1];
-        return Padding(padding: const EdgeInsets.only(bottom: 32), child: BlocProvider(
+        final (shelf, kind) = _shelves[index - 1];
+        return Padding(padding: const EdgeInsets.only(bottom: 24), child: BlocProvider(
           create: (context) => CatalogCubit(context.read<CatalogRepository>(), kind: kind, shelf: shelf)..load(),
           child: _TrendingShelf(kind, shelf),
         ));
@@ -40,22 +77,63 @@ class DiscoverPage extends StatelessWidget {
   }
 }
 
-String catalogHeading(MediaKind kind, BrowseShelf shelf) => '${switch (shelf) {
-  BrowseShelf.trending => 'Trending', BrowseShelf.popular => 'Popular',
-  BrowseShelf.recent => 'New', BrowseShelf.upcoming => 'Upcoming',
-}} ${kind == MediaKind.movie ? 'Movies' : 'Shows'}';
-
-class _SearchShortcut extends StatelessWidget {
-  const _SearchShortcut();
+/// Must-style personal shelf at the top of Discover, with the reason under each poster.
+class _ForYou extends StatefulWidget {
+  const _ForYou();
 
   @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-    onPressed: () => context.push('/search'),
-    icon: const Icon(Icons.search),
-    label: const Align(
-      alignment: Alignment.centerLeft,
-      child: Text('Search titles, credits and people'),
-    ),
+  State<_ForYou> createState() => _ForYouState();
+}
+
+class _ForYouState extends State<_ForYou> {
+  late Future<List<CatalogTitle>> _picks = context.read<CatalogRepository>().forYou();
+  late final StreamSubscription<void> _changes = context.read<LibraryRepository>().changes.listen((_) {
+    if (mounted) setState(() { _picks = context.read<CatalogRepository>().forYou(refresh: true); });
+  });
+
+  @override
+  void initState() {
+    super.initState();
+    _changes;
+  }
+
+  @override
+  void dispose() {
+    unawaited(_changes.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder(
+    future: _picks,
+    builder: (context, snapshot) {
+      if (snapshot.hasError) return const SizedBox.shrink();
+      final picks = snapshot.data;
+      if (picks != null && picks.isEmpty) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Card(child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: const Icon(PhosphorIconsRegular.sparkle, color: coralColor),
+            title: const Text('Picks for you'),
+            subtitle: const Text('Mark a few titles watched and personal picks show up here.'),
+            onTap: () => showSearchSheet(context),
+          )),
+        );
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const SectionHeader('For you'),
+        Shelf(itemWidth: 136, children: picks == null ? null : [
+          for (final item in picks)
+            PosterCard(
+              poster: item.poster,
+              title: item.name,
+              caption: item.caption,
+              onTap: () => context.push(item.location),
+            ),
+        ]),
+      ]);
+    },
   );
 }
 
@@ -66,83 +144,266 @@ class _TrendingShelf extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = catalogHeading(kind, shelf);
     final cubit = context.read<CatalogCubit>();
     final state = context.watch<CatalogCubit>().state;
+    final page = state.page;
+    if (page != null && page.items.isEmpty && !state.loading && !state.failed) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ),
-              TextButton(
-                  onPressed: () => context.push('/trending/${kind.name}?shelf=${shelf.name}'),
-                child: const Text('See all'),
-              ),
-            ],
-          ),
+        SectionHeader(
+          catalogHeading(kind, shelf),
+          onMore: () => context.push('/trending/${kind.name}?shelf=${shelf.name}'),
+          trailing: page?.stale == true
+              ? const Tooltip(message: 'Showing saved results', child: Icon(PhosphorIconsRegular.cloudSlash, size: 18, color: mutedColor))
+              : null,
         ),
-        if (state.page?.stale == true)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text('Showing saved results'),
-          ),
-        if (state.page case final page?)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (final item in page.items)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: SizedBox(width: 96, child: _Poster(item)),
-                    ),
-                ],
-              ),
-            ),
-          )
-        else if (state.loading)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: LinearProgressIndicator(),
-          ),
-        if (state.failed)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: _CatalogRetry(onRetry: cubit.load),
-          ),
+        if (state.failed && page == null)
+          Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: _CatalogRetry(onRetry: cubit.load))
+        else
+          Shelf(children: page == null ? null : [
+            for (final item in page.items)
+              PosterCard(poster: item.poster, title: item.name, caption: item.caption,
+                onTap: () => context.push(item.location)),
+          ]),
       ],
     );
   }
 }
 
-class _Poster extends StatelessWidget {
-  const _Poster(this.title);
-  final CatalogTitle title;
+/// The center "+" of the tab bar: search the catalog and add a title without leaving the current tab.
+Future<void> showSearchSheet(BuildContext context, {String? query}) => showModalBottomSheet<void>(useRootNavigator: true, 
+  context: context,
+  isScrollControlled: true,
+  useSafeArea: true,
+  builder: (sheet) => BlocProvider(
+    create: (_) => CatalogCubit(context.read<CatalogRepository>()),
+    child: FractionallySizedBox(heightFactor: .94, child: _SearchSheet(router: GoRouter.of(context), query: query)),
+  ),
+);
+
+class _SearchSheet extends StatefulWidget {
+  const _SearchSheet({required this.router, this.query});
+  final GoRouter router;
+  final String? query;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: () => context.push(title.location),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AspectRatio(aspectRatio: 2 / 3, child: Artwork(title.poster)),
+  State<_SearchSheet> createState() => _SearchSheetState();
+}
+
+class _SearchSheetState extends State<_SearchSheet> {
+  final _field = TextEditingController();
+  Timer? _debounce;
+  String? _query;
+  String? _error;
+  final _busy = <int>{};
+  final _done = <int, Set<String>>{};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.query case final query?) {
+      _field.text = query;
+      WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _changed(query); });
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _field.dispose();
+    super.dispose();
+  }
+
+  void _changed(String value) {
+    final cubit = context.read<CatalogCubit>();
+    _debounce?.cancel();
+    final query = value.trim();
+    setState(() {
+      _query = query.length < 2 ? null : query;
+      _error = null;
+    });
+    cubit.clear();
+    if (_query != null) {
+      _debounce = Timer(const Duration(milliseconds: 300), () => cubit.load(query: query));
+    }
+  }
+
+  void _go(String location) {
+    Navigator.pop(context);
+    widget.router.push(location);
+  }
+
+  Future<void> _quick(CatalogTitle item, String action) async {
+    if (context.read<AccountCubit>().state.phase != AccountPhase.ready) {
+      _go('/account');
+      return;
+    }
+    if (!_busy.add(item.tmdbId)) return;
+    setState(() => _error = null);
+    final catalog = context.read<CatalogRepository>();
+    final repo = context.read<LibraryRepository>();
+    try {
+      final full = item.id == null ? await catalog.detail(item.kind, item.tmdbId) : item;
+      final id = full.id!;
+      await repo.rememberTitle(full);
+      final state = await repo.snapshot(id);
+      await repo.apply(switch (action) {
+        'want' => TrackingCommand(id, 'set_wanted', {'wanted': true, 'wanted_revision': state.revision}),
+        'start' => TrackingCommand(id, 'start_show', {
+          'show_revision': state.showRevision,
+          'wanted_revision': state.revision,
+        }),
+        _ => TrackingCommand(id, 'mark_movie_watched', {
+          'viewing_id': const Uuid().v4(),
+          'wanted_revision': state.revision,
+        }),
+      });
+      if (mounted) setState(() => (_done[item.tmdbId] ??= {}).add(action));
+    } on Exception catch (error) {
+      if (mounted) setState(() => _error = '${item.name}: ${trackingMessage(error)}');
+    } finally {
+      if (mounted) setState(() => _busy.remove(item.tmdbId));
+    }
+  }
+
+  Widget _result(CatalogTitle item) {
+    final busy = _busy.contains(item.tmdbId);
+    final done = _done[item.tmdbId] ?? const {};
+    final movie = item.kind == MediaKind.movie;
+    final upcoming = item.releaseDay?.isAfter(DateUtils.dateOnly(DateTime.now())) ?? false;
+    final primary = movie ? 'watched' : 'start';
+    return InkWell(
+      onTap: () => _go(item.location),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(children: [
+          SizedBox(width: 48, height: 72, child: Artwork(item.poster)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(item.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium),
+            Text(item.caption, style: Theme.of(context).textTheme.bodySmall),
+          ])),
+          IconButton(
+            tooltip: done.contains('want') ? '${item.name} is in Want' : 'Add ${item.name} to Want',
+            onPressed: busy || done.contains('want') ? null : () => _quick(item, 'want'),
+            icon: Icon(done.contains('want') ? PhosphorIconsFill.bookmarkSimple : PhosphorIconsRegular.bookmarkSimple,
+              color: done.contains('want') ? coralColor : null),
+          ),
+          if (!upcoming)
+            IconButton.filledTonal(
+              tooltip: done.contains(primary)
+                  ? (movie ? 'Marked watched' : 'Tracking')
+                  : (movie ? 'Mark ${item.name} watched' : 'Start watching ${item.name}'),
+              onPressed: busy || done.contains(primary) ? null : () => _quick(item, primary),
+              icon: busy
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(done.contains(primary) ? PhosphorIconsFill.checkCircle : movie ? PhosphorIconsBold.check : PhosphorIconsBold.plus,
+                      color: done.contains(primary) ? coralColor : null),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<CatalogCubit>().state;
+    final page = state.page;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextField(
+            controller: _field,
+            autofocus: true,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              prefixIcon: const Icon(PhosphorIconsRegular.magnifyingGlass),
+              hintText: 'Movies, shows, people',
+              suffixIcon: _field.text.isEmpty ? null : IconButton(
+                tooltip: 'Clear search',
+                icon: const Icon(PhosphorIconsRegular.x),
+                onPressed: () { _field.clear(); _changed(''); },
+              ),
+            ),
+            onChanged: _changed,
+          ),
+        ),
         const SizedBox(height: 4),
-        Text(title.name, maxLines: 2, overflow: TextOverflow.ellipsis),
-        Text(title.caption, style: Theme.of(context).textTheme.bodySmall),
-      ],
-    ),
-  );
+        SizedBox(height: 4, child: state.loading ? const LinearProgressIndicator() : null),
+        Expanded(child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          children: [
+            if (_error case final error?) InlineNotice(error, icon: PhosphorIconsRegular.warningCircle),
+            if (_query == null) ...[
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const CircleAvatar(backgroundColor: pressedColor, child: Icon(PhosphorIconsRegular.users, color: coralColor)),
+                title: const Text('Find friends on Taspa'),
+                trailing: const Icon(PhosphorIconsRegular.caretRight),
+                onTap: () => _go('/people'),
+              ),
+              const SizedBox(height: 16),
+              Text('Browse', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final kind in MediaKind.values)
+                  for (final shelf in BrowseShelf.values)
+                    ActionChip(
+                      label: Text(catalogHeading(kind, shelf)),
+                      onPressed: () => _go('/trending/${kind.name}?shelf=${shelf.name}'),
+                    ),
+                ActionChip(
+                  avatar: const Icon(PhosphorIconsRegular.shapes, size: 18),
+                  label: const Text('Genres'),
+                  onPressed: () => _go('/genres'),
+                ),
+              ]),
+            ],
+            if (state.failed)
+              InlineNotice('The catalog is temporarily unavailable.', icon: PhosphorIconsRegular.cloudSlash,
+                action: 'Retry', onAction: () => context.read<CatalogCubit>().load(query: _query)),
+            if (page case final page? when _query != null) ...[
+              if (page.stale) const InlineNotice('Showing saved results', icon: PhosphorIconsRegular.cloudSlash),
+              if (page.items.isEmpty && page.people.isEmpty)
+                const EmptyState(icon: PhosphorIconsRegular.magnifyingGlass, title: 'Nothing found',
+                  message: 'Try another spelling or the original title.'),
+              for (final kind in MediaKind.values)
+                if (page.items.any((item) => item.kind == kind)) ...[
+                  SectionHeader(kind == MediaKind.movie ? 'Movies' : 'Shows', padding: const EdgeInsets.only(top: 8)),
+                  for (final item in page.items.where((item) => item.kind == kind)) _result(item),
+                ],
+              if (page.people.isNotEmpty) ...[
+                const SectionHeader('Cast and crew', padding: EdgeInsets.only(top: 8)),
+                for (final person in page.people)
+                  InkWell(
+                    onTap: () => _go('/credits/${person.id}'),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(children: [
+                        SizedBox(width: 48, height: 48, child: Artwork(person.portrait, radius: 24, icon: PhosphorIconsRegular.user)),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(person.name, style: Theme.of(context).textTheme.titleMedium)),
+                      ]),
+                    ),
+                  ),
+              ],
+              if (page.nextPage != null)
+                OutlinedButton(
+                  onPressed: state.loading ? null : () => context.read<CatalogCubit>().load(query: _query, more: true),
+                  child: const Text('Load more'),
+                ),
+            ],
+          ],
+        )),
+      ]),
+    );
+  }
 }
 
 class _CatalogRetry extends StatelessWidget {
@@ -150,13 +411,8 @@ class _CatalogRetry extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => Wrap(
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: [
-      const Text('The catalog is temporarily unavailable.'),
-      TextButton(onPressed: onRetry, child: const Text('Retry')),
-    ],
-  );
+  Widget build(BuildContext context) => InlineNotice('The catalog is temporarily unavailable.',
+    icon: PhosphorIconsRegular.cloudSlash, action: 'Retry', onAction: onRetry);
 }
 
 class CatalogResultsPage extends StatefulWidget {
@@ -171,11 +427,24 @@ class CatalogResultsPage extends StatefulWidget {
 class _CatalogResultsPageState extends State<CatalogResultsPage> {
   Timer? _debounce;
   String? _query;
+  final _field = TextEditingController();
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _field.dispose();
     super.dispose();
+  }
+
+  void _changed(String value) {
+    final cubit = context.read<CatalogCubit>();
+    _debounce?.cancel();
+    final query = value.trim();
+    setState(() => _query = query.length < 2 ? null : query);
+    cubit.clear();
+    if (_query != null) {
+      _debounce = Timer(const Duration(milliseconds: 360), () => cubit.load(query: query));
+    }
   }
 
   @override
@@ -183,71 +452,107 @@ class _CatalogResultsPageState extends State<CatalogResultsPage> {
     final state = context.watch<CatalogCubit>().state;
     final cubit = context.read<CatalogCubit>();
     final isSearch = widget.kind == null;
+    final page = state.page;
+    final more = page?.nextPage != null
+        ? Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: OutlinedButton(
+              onPressed: state.loading ? null : () => cubit.load(query: _query, more: true),
+              child: const Text('Load more'),
+            ),
+          )
+        : null;
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          isSearch
-              ? 'Search'
-              : catalogHeading(widget.kind!, widget.shelf),
-        ),
+        titleSpacing: isSearch ? 0 : 16,
+        title: isSearch
+            ? Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: TextField(
+                  controller: _field,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(PhosphorIconsRegular.magnifyingGlass),
+                    hintText: 'Movies, shows, people',
+                    suffixIcon: _field.text.isEmpty ? null : IconButton(
+                      tooltip: 'Clear search',
+                      icon: const Icon(PhosphorIconsRegular.x),
+                      onPressed: () { _field.clear(); _changed(''); },
+                    ),
+                  ),
+                  onChanged: _changed,
+                ),
+              )
+            : Text(catalogHeading(widget.kind!, widget.shelf)),
+        bottom: state.loading
+            ? const PreferredSize(preferredSize: Size.fromHeight(4), child: LinearProgressIndicator())
+            : null,
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            if (isSearch)
-              TextField(
-                autofocus: true,
-                textInputAction: TextInputAction.search,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Search titles and credits',
-                ),
-                onChanged: (value) {
-                  _debounce?.cancel();
-                  final query = value.trim();
-                  _query = query.length < 2 ? null : query;
-                  cubit.clear();
-                  if (_query != null) {
-                    _debounce = Timer(
-                      const Duration(milliseconds: 360),
-                      () => cubit.load(query: query),
-                    );
-                  }
-                },
-              ),
-            if (isSearch)
-              TextButton.icon(onPressed: () => context.push('/people'), icon: const Icon(Icons.person_search),
-                label: const Text('Search Taspa users')),
-            if (state.loading) const LinearProgressIndicator(),
-            if (state.failed)
-              _CatalogRetry(onRetry: () => cubit.load(query: _query)),
-            if (state.page case final page?) ...[
-              if (page.stale) const Text('Showing saved results'),
-              if (page.items.isEmpty && page.people.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.only(top: 24),
-                  child: Text('No matching titles or people.'),
-                ),
-              for (final kind in MediaKind.values)
-                if (page.items.any((item) => item.kind == kind)) ...[
-                  if (isSearch) Text(kind == MediaKind.movie ? 'Movies' : 'Shows', style: Theme.of(context).textTheme.titleLarge),
-                  for (final item in page.items.where((item) => item.kind == kind)) CatalogTitleTile(item),
+        child: !isSearch
+            ? CustomScrollView(slivers: [
+                if (state.failed || page?.stale == true)
+                  SliverPadding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 0), sliver: SliverToBoxAdapter(
+                    child: state.failed
+                        ? _CatalogRetry(onRetry: () => cubit.load())
+                        : const InlineNotice('Showing saved results', icon: PhosphorIconsRegular.cloudSlash))),
+                if (page != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.all(16),
+                    sliver: SliverGrid.builder(
+                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 140, crossAxisSpacing: 12, mainAxisSpacing: 16, childAspectRatio: .5,
+                      ),
+                      itemCount: page.items.length,
+                      itemBuilder: (context, index) {
+                        final item = page.items[index];
+                        return PosterCard(poster: item.poster, title: item.name, caption: item.caption,
+                          onTap: () => context.push(item.location));
+                      },
+                    ),
+                  ),
+                if (more != null) SliverPadding(padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverToBoxAdapter(child: more)),
+              ])
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  if (_query == null) ...[
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const CircleAvatar(backgroundColor: surfaceColor, child: Icon(PhosphorIconsRegular.users, color: coralColor)),
+                      title: const Text('Find people on Taspa'),
+                      trailing: const Icon(PhosphorIconsRegular.caretRight),
+                      onTap: () => context.push('/people'),
+                    ),
+                    const SizedBox(height: 16),
+                    Text('Browse by genre', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 12),
+                    Wrap(spacing: 8, runSpacing: 8, children: [
+                      for (final (id, label, _) in genres)
+                        ActionChip(label: Text(label), onPressed: () => context.push('/genres?genre=$id')),
+                    ]),
+                  ],
+                  if (state.failed) _CatalogRetry(onRetry: () => cubit.load(query: _query)),
+                  if (page case final page? when _query != null) ...[
+                    if (page.stale) const InlineNotice('Showing saved results', icon: PhosphorIconsRegular.cloudSlash),
+                    if (page.items.isEmpty && page.people.isEmpty)
+                      const EmptyState(icon: PhosphorIconsRegular.magnifyingGlass, title: 'Nothing found',
+                        message: 'Try another spelling or the original title.'),
+                    for (final kind in MediaKind.values)
+                      if (page.items.any((item) => item.kind == kind)) ...[
+                        SectionHeader(kind == MediaKind.movie ? 'Movies' : 'Shows', padding: const EdgeInsets.only(top: 8)),
+                        for (final item in page.items.where((item) => item.kind == kind)) CatalogTitleTile(item),
+                      ],
+                    if (page.people.isNotEmpty) ...[
+                      const SectionHeader('Cast and crew', padding: EdgeInsets.only(top: 8)),
+                      for (final person in page.people) CatalogPersonTile(person),
+                    ],
+                    ?more,
+                  ],
                 ],
-              if (page.people.isNotEmpty)
-                Text('Cast and crew', style: Theme.of(context).textTheme.titleLarge),
-              for (final person in page.people)
-                CatalogPersonTile(person),
-              if (page.nextPage != null)
-                OutlinedButton(
-                  onPressed: state.loading
-                      ? null
-                      : () => cubit.load(query: _query, more: true),
-                  child: const Text('Load more'),
-                ),
-            ],
-          ],
-        ),
+              ),
       ),
     );
   }
@@ -258,11 +563,20 @@ class CatalogTitleTile extends StatelessWidget {
   final CatalogTitle title;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: const EdgeInsets.symmetric(vertical: 8),
-    leading: SizedBox(width: 48, height: 72, child: Artwork(title.poster)),
-    title: Text(title.name), subtitle: Text(title.caption),
+  Widget build(BuildContext context) => InkWell(
     onTap: () => context.push(title.location),
+    borderRadius: BorderRadius.circular(12),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        SizedBox(width: 48, height: 72, child: Artwork(title.poster)),
+        const SizedBox(width: 16),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium),
+          Text(title.caption, style: Theme.of(context).textTheme.bodySmall),
+        ])),
+      ]),
+    ),
   );
 }
 
@@ -271,11 +585,41 @@ class CatalogPersonTile extends StatelessWidget {
   final CatalogPerson person;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: const EdgeInsets.symmetric(vertical: 8),
-    leading: SizedBox(width: 48, height: 72, child: Artwork(person.portrait)),
-    title: Text(person.name), subtitle: person.role == null ? null : Text(person.role!),
+  Widget build(BuildContext context) => InkWell(
     onTap: () => context.push('/credits/${person.id}'),
+    borderRadius: BorderRadius.circular(12),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        SizedBox(width: 48, height: 48, child: Artwork(person.portrait, radius: 24, icon: PhosphorIconsRegular.user)),
+        const SizedBox(width: 16),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(person.name, style: Theme.of(context).textTheme.titleMedium),
+          if (person.role case final role?) Text(role, style: Theme.of(context).textTheme.bodySmall),
+        ])),
+      ]),
+    ),
+  );
+}
+
+/// Round portrait with name and role below, for horizontal cast rows.
+class CatalogPersonAvatar extends StatelessWidget {
+  const CatalogPersonAvatar(this.person, {super.key});
+  final CatalogPerson person;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: () => context.push('/credits/${person.id}'),
+    borderRadius: BorderRadius.circular(12),
+    child: Column(children: [
+      SizedBox(width: 72, height: 72, child: Artwork(person.portrait, radius: 36, icon: PhosphorIconsRegular.user)),
+      const SizedBox(height: 8),
+      Text(person.name, maxLines: 2, textAlign: TextAlign.center, overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 13, height: 1.3, fontWeight: FontWeight.w600)),
+      if (person.role case final role?)
+        Text(role, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12, color: mutedColor)),
+    ]),
   );
 }
 
@@ -293,39 +637,99 @@ class _FilmographyPageState extends State<FilmographyPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Filmography')),
+    appBar: AppBar(),
     body: FutureBuilder(future: _result, builder: (context,snapshot) {
       if (snapshot.hasError) {
-        return Center(child: TextButton(onPressed: () => setState(() => _result = _load()),
+        return Center(child: TextButton(onPressed: () => setState(() { _result = _load(); }),
           child: const Text('Could not load credits. Retry')));
       }
       final result = snapshot.data;
       if (result == null) return const Center(child: CircularProgressIndicator());
-      return ListView(padding: const EdgeInsets.all(16), children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          SizedBox(width: 72, height: 108, child: Artwork(result.identity.portrait)),
-          const SizedBox(width: 16),
-          Expanded(child: Text(result.identity.name, style: Theme.of(context).textTheme.displaySmall)),
-        ]),
-        const SizedBox(height: 24),
-        if (result.credits.isEmpty) const Text('No catalog credits found.'),
-        for (final title in result.credits) CatalogTitleTile(title),
+      return CustomScrollView(slivers: [
+        SliverToBoxAdapter(child: Column(children: [
+          SizedBox(width: 112, height: 112, child: Artwork(result.identity.portrait, radius: 56, icon: PhosphorIconsRegular.user)),
+          const SizedBox(height: 16),
+          Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(result.identity.name, textAlign: TextAlign.center, style: Theme.of(context).textTheme.displaySmall)),
+          const SizedBox(height: 4),
+          Text('${result.credits.length} titles', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 16),
+          if (result.credits.isEmpty) const Text('No catalog credits found.'),
+        ])),
+        SliverPadding(
+          padding: const EdgeInsets.all(16),
+          sliver: SliverGrid.builder(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 140, crossAxisSpacing: 12, mainAxisSpacing: 16, childAspectRatio: .5,
+            ),
+            itemCount: result.credits.length,
+            itemBuilder: (context, index) {
+              final title = result.credits[index];
+              return PosterCard(poster: title.poster, title: title.name, caption: title.caption,
+                onTap: () => context.push(title.location));
+            },
+          ),
+        ),
       ]);
     }),
   );
 }
 
-class GenrePage extends StatelessWidget {
+const genres = [
+  (18, 'Drama', PhosphorIconsRegular.maskHappy),
+  (35, 'Comedy', PhosphorIconsRegular.smiley),
+  (80, 'Crime', PhosphorIconsRegular.detective),
+  (16, 'Animation', PhosphorIconsRegular.paintBrush),
+  (9648, 'Mystery', PhosphorIconsRegular.magnifyingGlass),
+];
+
+class GenrePage extends StatefulWidget {
   const GenrePage({super.key});
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Genres')),
-    body: ListView(padding: const EdgeInsets.all(16), children: [
-      for (final (id, label) in const [(18,'Drama'),(35,'Comedy'),(80,'Crime'),(16,'Animation'),(9648,'Mystery')])
-        ListTile(title: Text(label), trailing: Wrap(children: [
-          TextButton(onPressed: () => context.push('/trending/movie?shelf=popular&genre=$id'), child: const Text('Movies')),
-          TextButton(onPressed: () => context.push('/trending/show?shelf=popular&genre=$id'), child: const Text('Shows')),
-        ])),
-    ]),
-  );
+  State<GenrePage> createState() => _GenrePageState();
+}
+
+class _GenrePageState extends State<GenrePage> {
+  MediaKind _kind = MediaKind.movie;
+
+  @override
+  Widget build(BuildContext context) {
+    final picked = int.tryParse(GoRouterState.of(context).uri.queryParameters['genre'] ?? '');
+    return Scaffold(
+      appBar: AppBar(title: const Text('Genres')),
+      body: ListView(padding: const EdgeInsets.all(16), children: [
+        SegmentedButton<MediaKind>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: MediaKind.movie, label: Text('Movies')),
+            ButtonSegment(value: MediaKind.show, label: Text('Shows')),
+          ],
+          selected: {_kind},
+          onSelectionChanged: (value) => setState(() => _kind = value.first),
+        ),
+        const SizedBox(height: 16),
+        GridView.count(
+          crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.6,
+          children: [
+            for (final (id, label, icon) in genres)
+              Card(
+                color: id == picked ? selectedColor : surfaceColor,
+                child: InkWell(
+                  onTap: () => context.push('/trending/${_kind.name}?shelf=popular&genre=$id'),
+                  child: Padding(padding: const EdgeInsets.all(16), child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Icon(icon, color: coralColor),
+                      Text(label, style: Theme.of(context).textTheme.titleMedium),
+                    ],
+                  )),
+                ),
+              ),
+          ],
+        ),
+      ]),
+    );
+  }
 }

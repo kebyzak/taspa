@@ -5,8 +5,12 @@ import '../data/catalog_repository.dart';
 typedef ShelfState = ({CatalogPage? page, bool loading, bool failed});
 
 class CatalogCubit extends Cubit<ShelfState> {
-  CatalogCubit(this._repository, {this.kind, this.shelf = BrowseShelf.trending, this.genre})
-    : super((page: null, loading: false, failed: false));
+  CatalogCubit(
+    this._repository, {
+    this.kind,
+    this.shelf = BrowseShelf.trending,
+    this.genre,
+  }) : super((page: null, loading: false, failed: false));
 
   final CatalogRepository _repository;
   final MediaKind? kind;
@@ -34,7 +38,7 @@ class CatalogCubit extends Cubit<ShelfState> {
         page: more
             ? (
                 items: [...previous!.items, ...result.items],
-                people: [...previous.people,...result.people],
+                people: [...previous.people, ...result.people],
                 nextPage: result.nextPage,
                 stale: previous.stale || result.stale,
               )

@@ -37,7 +37,7 @@ export async function rpc<T>(name: string, params: Json, headers = serviceHeader
     headers: { ...headers, "Content-Type": "application/json", "Content-Profile": "api" },
     body: JSON.stringify(params),
   });
-  if (!response.ok) throw new Error("backend_request_failed");
+  if (!response.ok) throw new Error(`backend_request_failed:${name}:${response.status}:${(await response.text()).slice(0, 200)}`);
   return (response.status === 204 ? null : await response.json()) as T;
 }
 

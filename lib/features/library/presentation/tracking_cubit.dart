@@ -7,7 +7,9 @@ import '../data/library_repository.dart';
 
 class TrackingCubit extends Cubit<TrackingState?> {
   TrackingCubit(this._repository, this.titleId) : super(null) {
-    _changes = _repository.changes.listen((_) => unawaited(load().catchError((Object _) {})));
+    _changes = _repository.changes.listen(
+      (_) => unawaited(load().catchError((Object _) {})),
+    );
   }
 
   final LibraryRepository _repository;
@@ -49,4 +51,3 @@ bool isTrackingConflict(Object error) =>
     error is TrackingFailure ||
     (error is PostgrestException &&
         {'22023', '22007', '22P02', '23505', '42501'}.contains(error.code));
-

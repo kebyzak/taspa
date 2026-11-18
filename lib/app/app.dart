@@ -7,6 +7,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'phosphor.dart';
 import '../core/offline_store.dart';
 import '../features/auth/account_page.dart';
 import '../features/auth/auth_cubit.dart';
@@ -19,6 +20,7 @@ import '../features/library/presentation/library_page.dart';
 import '../features/notifications/inbox_page.dart';
 import '../features/notifications/notifications.dart';
 import '../features/social/data/social_repository.dart';
+import '../features/social/presentation/must_import.dart';
 import '../features/social/presentation/people.dart';
 import '../features/social/presentation/reviews.dart';
 import 'theme.dart';
@@ -46,6 +48,10 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
   late final GoRouter _router = GoRouter(
     initialLocation: '/discover',
     routes: [
+      // Paths from earlier builds, notifications and saved state.
+      GoRoute(path: '/shows', redirect: (context, state) => '/library'),
+      GoRoute(path: '/want', redirect: (context, state) => '/library'),
+      GoRoute(path: '/following', redirect: (context, state) => '/feed'),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => _Tabs(shell: shell),
         branches: [
@@ -61,14 +67,16 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
             routes: [
               GoRoute(
                 path: '/library',
-                builder: (context, state) => const LibraryPage(),
+                builder: (context, state) => LibraryTab(
+                  movies: state.uri.queryParameters['tab'] == 'movies',
+                ),
               ),
             ],
           ),
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/following',
+                path: '/feed',
                 builder: (context, state) => const FollowingPage(),
               ),
             ],
@@ -101,6 +109,17 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
       ),
       GoRoute(path: '/help', builder: (context, state) => const _HelpPage()),
       GoRoute(
+        path: '/import-must',
+        builder: (context, state) => const MustImportPage(),
+      ),
+      GoRoute(
+        path: '/movies',
+        builder: (context, state) => Scaffold(
+          appBar: AppBar(title: const Text('Watched movies')),
+          body: const LibraryPage(section: LibrarySection.watchedMovies),
+        ),
+      ),
+      GoRoute(
         path: '/notifications',
         builder: (context, state) => InboxPage(
           initialId: state.uri.queryParameters['notice'],
@@ -117,13 +136,15 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
       ),
       GoRoute(
         path: '/people/:id/library',
-        builder: (context, state) => _viewerPage(context,
-            PersonLibraryPage(id: state.pathParameters['id']!)),
+        builder: (context, state) => _viewerPage(
+          context,
+          PersonLibraryPage(id: state.pathParameters['id']!),
+        ),
       ),
       GoRoute(
         path: '/people/:id',
-        builder: (context, state) => _viewerPage(context,
-            PersonPage(id: state.pathParameters['id']!)),
+        builder: (context, state) =>
+            _viewerPage(context, PersonPage(id: state.pathParameters['id']!)),
       ),
       GoRoute(
         path: '/people/:id/:list',
@@ -141,8 +162,10 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
       ),
       GoRoute(
         path: '/reviews/:id',
-        builder: (context, state) => _viewerPage(context,
-            ReviewDetailPage(id: state.pathParameters['id']!)),
+        builder: (context, state) => _viewerPage(
+          context,
+          ReviewDetailPage(id: state.pathParameters['id']!),
+        ),
       ),
       GoRoute(
         path: '/review-list',
@@ -164,20 +187,32 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
         builder: (context, state) {
           final kind = _kind(state.pathParameters['kind']);
           if (kind == null) return const _UnavailableRoute();
-          final shelf = BrowseShelf.values.where((value) => value.name == state.uri.queryParameters['shelf']).firstOrNull
-              ?? BrowseShelf.trending;
+          final shelf =
+              BrowseShelf.values
+                  .where(
+                    (value) => value.name == state.uri.queryParameters['shelf'],
+                  )
+                  .firstOrNull ??
+              BrowseShelf.trending;
           final genre = int.tryParse(state.uri.queryParameters['genre'] ?? '');
           return BlocProvider(
-            create: (context) => CatalogCubit(_catalog, kind: kind, shelf: shelf, genre: genre)..load(),
+            create: (context) =>
+                CatalogCubit(_catalog, kind: kind, shelf: shelf, genre: genre)
+                  ..load(),
             child: CatalogResultsPage(kind: kind, shelf: shelf),
           );
         },
       ),
-      GoRoute(path: '/genres', builder: (context,state) => const GenrePage()),
-      GoRoute(path: '/credits/:id', builder: (context,state) {
-        final id = int.tryParse(state.pathParameters['id'] ?? '');
-        return id == null || id <= 0 ? const _UnavailableRoute() : FilmographyPage(id: id);
-      }),
+      GoRoute(path: '/genres', builder: (context, state) => const GenrePage()),
+      GoRoute(
+        path: '/credits/:id',
+        builder: (context, state) {
+          final id = int.tryParse(state.pathParameters['id'] ?? '');
+          return id == null || id <= 0
+              ? const _UnavailableRoute()
+              : FilmographyPage(id: id);
+        },
+      ),
       GoRoute(
         path: '/shared-title/:id',
         builder: (context, state) {
@@ -211,31 +246,54 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
     _ => null,
   };
 
-  static final _shareId = RegExp(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', caseSensitive: false);
-
-  Widget _viewerPage(BuildContext context, Widget page) => BlocBuilder<AccountCubit, Account>(
-    buildWhen: (before, after) => before.userId != after.userId || before.phase != after.phase,
-    builder: (context, account) => KeyedSubtree(key: ValueKey((account.userId, account.phase)), child: page),
+  static final _shareId = RegExp(
+    r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$',
+    caseSensitive: false,
   );
 
+  Widget _viewerPage(BuildContext context, Widget page) =>
+      BlocBuilder<AccountCubit, Account>(
+        buildWhen: (before, after) =>
+            before.userId != after.userId || before.phase != after.phase,
+        builder: (context, account) => KeyedSubtree(
+          key: ValueKey((account.userId, account.phase)),
+          child: page,
+        ),
+      );
+
   void _openLink(Uri link) {
-    if (!mounted || link.scheme != 'com.taspa.taspa' || link.host != 'share' || link.pathSegments.length != 2) return;
+    if (!mounted ||
+        link.scheme != 'com.taspa.taspa' ||
+        link.host != 'share' ||
+        link.pathSegments.length != 2)
+      return;
     final [kind, id] = link.pathSegments;
     if (!_shareId.hasMatch(id)) return;
-    final target = switch (kind) {'title' => '/shared-title/$id', 'review' => '/reviews/$id', _ => null};
-    if (target != null && _router.state.uri.path != target) _router.push(target);
+    final target = switch (kind) {
+      'title' => '/shared-title/$id',
+      'review' => '/reviews/$id',
+      _ => null,
+    };
+    if (target != null && _router.state.uri.path != target)
+      _router.push(target);
   }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _syncTimer = Timer.periodic(const Duration(seconds: 30), (_) => _syncLibrary());
+    _syncTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _syncLibrary(),
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_push.attach(_openNotice));
       _syncLibrary();
-      _links = AppLinks().uriLinkStream.listen(_openLink, onError: (Object _) {});
+      _links = AppLinks().uriLinkStream.listen(
+        _openLink,
+        onError: (Object _) {},
+      );
     });
   }
 
@@ -310,7 +368,10 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
           final previous = _cacheOwner;
           if (state.userId != previous) {
             _cacheOwner = state.userId;
-            if (previous != null) unawaited(_offline.forgetCache(previous).catchError((Object _) {}));
+            if (previous != null)
+              unawaited(
+                _offline.forgetCache(previous).catchError((Object _) {}),
+              );
           }
           PaintingBinding.instance.imageCache.clear();
           PaintingBinding.instance.imageCache.clearLiveImages();
@@ -339,72 +400,155 @@ class _Tabs extends StatelessWidget {
   const _Tabs({required this.shell});
   final StatefulNavigationShell shell;
 
-  static const _labels = ['Discover', 'Library', 'Following', 'Profile'];
+  static const _labels = ['Discover', 'Library', 'Feed', 'Profile'];
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: shell.currentIndex == 0
-          ? SvgPicture.asset(
-              'assets/brand/wordmark_ivory.svg',
-              width: 96,
-              semanticsLabel: 'Taspa',
-            )
-          : Text(_labels[shell.currentIndex]),
-      actions: [
-        if (shell.currentIndex != 1)
-          IconButton(
-            tooltip: 'Notifications',
-            onPressed: () => context.push('/notifications'),
-            icon: const Icon(Icons.notifications_none),
+  Widget build(BuildContext context) {
+    final tab = shell.currentIndex;
+    return Scaffold(
+      appBar: AppBar(
+        title: tab == 0
+            ? SvgPicture.asset(
+                'assets/brand/wordmark_ivory.svg',
+                width: 96,
+                semanticsLabel: 'Taspa',
+              )
+            : Text(_labels[tab]),
+        actions: [
+          if (tab == 2)
+            IconButton(
+              tooltip: 'Find people',
+              onPressed: () => context.push('/people'),
+              icon: const Icon(PhosphorIconsRegular.userPlus),
+            ),
+          if (tab == 3)
+            IconButton(
+              tooltip: 'Notifications',
+              onPressed: () => context.push('/notifications'),
+              icon: const Icon(PhosphorIconsRegular.bell),
+            ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: SafeArea(top: false, bottom: false, child: shell),
+      bottomNavigationBar: _TabBar(
+        current: tab,
+        onTab: (index) => shell.goBranch(index, initialLocation: index == tab),
+        onAdd: () => showSearchSheet(context),
+      ),
+    );
+  }
+}
+
+/// Rounded tab bar: four labelled outline tabs with a round Add button in the middle.
+class _TabBar extends StatelessWidget {
+  const _TabBar({
+    required this.current,
+    required this.onTab,
+    required this.onAdd,
+  });
+  final int current;
+  final ValueChanged<int> onTab;
+  final VoidCallback onAdd;
+
+  static const _tabs = [
+    (PhosphorIconsRegular.compass, PhosphorIconsFill.compass, 'Discover'),
+    (PhosphorIconsRegular.filmStrip, PhosphorIconsFill.filmStrip, 'Library'),
+    (PhosphorIconsRegular.lightning, PhosphorIconsFill.lightning, 'Feed'),
+    (PhosphorIconsRegular.user, PhosphorIconsFill.user, 'Profile'),
+  ];
+
+  Widget _tab(int index) {
+    final (icon, selectedIcon, label) = _tabs[index];
+    final selected = index == current;
+    final color = selected ? inkColor : mutedColor;
+    return Expanded(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: label,
+        excludeSemantics: true,
+        child: InkResponse(
+          onTap: () => onTab(index),
+          splashFactory: NoSplash.splashFactory,
+          highlightColor: Colors.transparent,
+          child: SizedBox(
+            height: 64,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  selected ? selectedIcon : icon,
+                  size: 24,
+                  color: selected ? coralColor : color,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
           ),
-        if (shell.currentIndex == 2)
-          IconButton(
-            tooltip: 'Find people',
-            onPressed: () => context.push('/people'),
-            icon: const Icon(Icons.person_add_alt),
-          ),
-        if (shell.currentIndex == 1)
-          IconButton(
-            tooltip: 'Search',
-            onPressed: () => context.push('/search'),
-            icon: const Icon(Icons.search),
-          ),
-        if (shell.currentIndex == 0)
-          IconButton(
-            tooltip: 'About Taspa',
-            onPressed: () => context.push('/help'),
-            icon: const Icon(Icons.info_outline),
-          ),
-      ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: const BoxDecoration(
+      color: surfaceColor,
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
-    body: SafeArea(top: false, bottom: false, child: shell),
-    bottomNavigationBar: NavigationBar(
-      selectedIndex: shell.currentIndex,
-      onDestinationSelected: (index) =>
-          shell.goBranch(index, initialLocation: index == shell.currentIndex),
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.explore_outlined),
-          selectedIcon: Icon(Icons.explore),
-          label: 'Discover',
+    child: SafeArea(
+      top: false,
+      minimum: const EdgeInsets.only(bottom: 4),
+      child: Container(
+        // Fixed height: the bottom bar gets loose constraints, and Center would otherwise fill the screen.
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            _tab(0),
+            _tab(1),
+            Expanded(
+              child: Center(
+                child: Semantics(
+                  button: true,
+                  label: 'Search and add a title',
+                  excludeSemantics: true,
+                  child: Material(
+                    color: coralColor,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      onTap: onAdd,
+                      customBorder: const CircleBorder(),
+                      splashFactory: NoSplash.splashFactory,
+                      highlightColor: Colors.transparent,
+                      child: const SizedBox(
+                        width: 52,
+                        height: 52,
+                        child: Icon(
+                          PhosphorIconsBold.plus,
+                          color: onCoralColor,
+                          size: 30,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            _tab(2),
+            _tab(3),
+          ],
         ),
-        NavigationDestination(
-          icon: Icon(Icons.video_library_outlined),
-          selectedIcon: Icon(Icons.video_library),
-          label: 'Library',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.people_outline),
-          selectedIcon: Icon(Icons.people),
-          label: 'Following',
-        ),
-        NavigationDestination(
-          icon: Icon(Icons.person_outline),
-          selectedIcon: Icon(Icons.person),
-          label: 'Profile',
-        ),
-      ],
+      ),
     ),
   );
 }
@@ -418,15 +562,64 @@ class _HelpPage extends StatelessWidget {
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text('Your film and TV diary', style: Theme.of(context).textTheme.headlineSmall),
+        Text(
+          'Your film and TV diary',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
         const SizedBox(height: 16),
-        const Text('Log movies and rewatches, save things to Wanted, and find your next unwatched episode in Continue Watching.'),
+        for (final (icon, text) in const [
+          (
+            PhosphorIconsRegular.checkCircle,
+            'Log movies and rewatches with or without a date.',
+          ),
+          (
+            PhosphorIconsRegular.bookmarkSimple,
+            'Save titles to Want for later.',
+          ),
+          (
+            PhosphorIconsRegular.playCircle,
+            'Continue Watching shows the next episode — one tap to mark it.',
+          ),
+          (
+            PhosphorIconsRegular.users,
+            'Follow friends. You choose who sees your library, ratings and reviews.',
+          ),
+        ])
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, color: coralColor),
+                const SizedBox(width: 16),
+                Expanded(child: Text(text)),
+              ],
+            ),
+          ),
         const SizedBox(height: 16),
-        const Text('Following shows activity from people you follow. You choose who can see your library, ratings and reviews.'),
-        TextButton(onPressed: () => context.push('/account'), child: const Text('Account and sign-in help')),
-        TextButton(onPressed: () => context.push('/notification-settings'), child: const Text('Notification settings')),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.userGear),
+                title: const Text('Account and sign-in'),
+                trailing: const Icon(PhosphorIconsRegular.caretRight),
+                onTap: () => context.push('/account'),
+              ),
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.bell),
+                title: const Text('Notification settings'),
+                trailing: const Icon(PhosphorIconsRegular.caretRight),
+                onTap: () => context.push('/notification-settings'),
+              ),
+            ],
+          ),
+        ),
         const SizedBox(height: 24),
-        const Text('Catalog data and imagery from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.'),
+        Text(
+          'Catalog data and imagery from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     ),
   );
@@ -441,7 +634,7 @@ class _UnavailableRoute extends StatelessWidget {
     body: Center(
       child: TextButton(
         onPressed: () => context.go('/discover'),
-        child: const Text('Back to Discover'),
+        child: const Text('Back to Taspa'),
       ),
     ),
   );

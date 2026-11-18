@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/phosphor.dart';
 import '../auth/auth_cubit.dart';
 import '../catalog/data/catalog_repository.dart';
 import 'notifications.dart';
@@ -97,6 +98,8 @@ class _InboxPageState extends State<InboxPage> {
         route = '/people/${item.target}';
       } else if (item.kind == 'like' || item.kind == 'comment') {
         route = '/reviews/${item.target}';
+      } else if (item.kind == 'import_done') {
+        route = '/import-must';
       } else {
         final title = await repo.client
             .schema('api')
@@ -125,7 +128,8 @@ class _InboxPageState extends State<InboxPage> {
     'like' => 'Someone liked your review',
     'comment' => 'New comment on your review',
     'episode' => 'New episode',
-    _ => 'A Wanted title releases soon',
+    'import_done' => 'Your Must import is finished',
+    _ => 'A title from Want releases soon',
   };
 
   @override
@@ -149,7 +153,7 @@ class _InboxPageState extends State<InboxPage> {
             IconButton(
               tooltip: 'Notification preferences',
               onPressed: () => context.push('/notification-settings'),
-              icon: const Icon(Icons.tune),
+              icon: const Icon(PhosphorIconsRegular.slidersHorizontal),
             ),
           ],
         ),
@@ -195,8 +199,8 @@ class _InboxPageState extends State<InboxPage> {
                       ListTile(
                         leading: Icon(
                           item.read
-                              ? Icons.notifications_none
-                              : Icons.notifications_active_outlined,
+                              ? PhosphorIconsRegular.bell
+                              : PhosphorIconsRegular.bellRinging,
                         ),
                         title: Text(_description(item.kind)),
                         subtitle: Text(
@@ -300,7 +304,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
             for (final (category, name) in const [
               ('social', 'Social activity'),
               ('episodes', 'New episodes'),
-              ('wanted', 'Wanted releases'),
+              ('wanted', 'Want releases'),
             ]) ...[
               Text(name, style: Theme.of(context).textTheme.titleLarge),
               SwitchListTile(
