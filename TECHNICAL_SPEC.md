@@ -1,0 +1,78 @@
+# Taspa technical specification
+
+**Architecture baseline · 18 November 2026**
+
+[PRODUCT_SPEC.md](PRODUCT_SPEC.md) defines product behavior and release scope. [DESIGN_DIRECTION.md](DESIGN_DIRECTION.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), and [BRAND_GUIDELINES.md](BRAND_GUIDELINES.md) govern presentation. The Splice artwork and platform assets under `assets/brand/` are the approved inputs. This specification defines how to deliver those requirements. The companion documents define [storage](DATABASE_SCHEMA.md), [contracts](API_SPEC.md), and [delivery order](IMPLEMENTATION_PLAN.md).
+
+## Architecture decisions
+
+| Responsibility | Owner |
+| --- | --- |
+| UI, navigation, optimistic state and local drafts | Flutter/Dart, flutter_bloc and GoRouter |
+| Identity, truth, authorization and transactions | Supabase Auth and PostgreSQL |
+| Object storage | Supabase Storage for user avatars. TMDB-hosted image URLs for catalog art. |
+| Remote catalog and push | Supabase Edge Functions call TMDB and FCM HTTP v1 |
+| Periodic work | Supabase Cron calls bounded Edge jobs and restricted SQL maintenance |
+| Live updates | Foreground refresh and FCM invalidation at launch. Supabase Realtime is reserved for a measured foreground need. |
+
+Supabase is the sole backend. FCM handles transport only. Launch uses one database, local Docker development, and separate hosted staging and production projects. No standalone server, Redis, separate search cluster, continuous worker, or playback infrastructure.
+
+## Flutter boundaries
+
+| Directory | Responsibility |
+| --- | --- |
+| `lib/app/` | Composition root, environment configuration, theme and Splice assets, GoRouter, auth and notification intent coordination |
+| `lib/core/` | Supabase initialization, session storage, SQLite connection/migrations, shared error mapping, pagination mechanics, time and identifiers |
+| `lib/features/auth/` | Session lifecycle, sign-up/verification, password reset and account settings |
+| `lib/features/catalog/` | Discover, categorized search, filmographies, titles, season navigation and catalog models |
+| `lib/features/library/` | Watched Movies/Shows/Wanted, history, progress, next episode, local snapshots and durable tracking operations |
+| `lib/features/opinions/` | Rating, review, privacy and spoiler reveal |
+| `lib/features/social/` | Following, user search, profiles, follows, comments, likes, blocks and reports |
+| `lib/features/notifications/` | Inbox, settings, device enrollment, and push intent resolution |
+| `supabase/` | Versioned SQL, local config and fixtures, Edge Functions, and scheduling definitions |
+
+Each feature starts with `presentation/` and `data/`, with `domain/` for meaningful typed values or pure logic. UI depends on Cubit/BLoC, which calls a feature repository. A repository translates Supabase rows and RPC responses once, owns cache and retries, and exposes immutable feature state. Keep DTOs local to the data boundary. Use Cubit by default and BLoC only when an explicit ordered event stream improves correctness. Compose dependencies in the app with BlocProvider and RepositoryProvider. Introduce an interface where a meaningful boundary needs substitution, such as the tracking repository used in offline scenarios. Skip per-verb use-case classes and a second business rules implementation in Dart. Catalog details compose library and opinion controls through their feature interfaces. [flutter_bloc package](https://pub.dev/packages/flutter_bloc)
+
+Use a GoRouter stateful shell for the four approved tabs with independent histories. Discover is the signed-in entry. Catalog and share routes identify stable Taspa targets. Auth callbacks use dedicated routes. Open valid links after initialization and authorization, carrying at most one validated internal return intent. A gated action returns to its context for explicit confirmation instead of automatically writing. Review/profile/season routes recheck access and give a neutral unavailable destination. FCM payloads carry an inbox identifier and have no authority to route around access checks. [GoRouter stateful navigation](https://pub.dev/documentation/go_router/latest/topics/Configuration-topic.html)
+
+Host public share resolution on Supabase Edge. Keep link previews free of opinions and private data so prior third-party preview caches cannot disclose later-restricted material. Add verified app links through the product link domain when its static association-file delivery is confirmed. Association files contain public app identifiers only. They need no application server. Keep an allowlisted native callback and email code path for Auth while verified-domain setup is pending. [Flutter sign-up](https://supabase.com/docs/reference/dart/auth-signup) · [Supabase PKCE flows](https://supabase.com/docs/guides/auth/server-side/advanced-guide)
+
+## Auth and account lifecycle
+
+- Guest uses the publishable key without a user session. Guest can browse the catalog and search permitted profile previews. No anonymous Auth account is provisioned.
+- Supabase email/password sign-up requires email verification. Configure confirmation and recovery callbacks with explicit redirect allowlists and a PKCE-capable Supabase Flutter configuration. Prefer verified app/universal links for production. Have an email flow that works across devices, such as entering an emailed verification code when the originating verifier is unavailable. Validate link type and intended route. Recovery enters a dedicated password form, then completes the recovery session before normal navigation. Use neutral success messages for account discovery and password reset.
+- Once verified, claim a case-insensitive unique handle through one RPC and finish optional profile setup. A verified user with no ready profile may only finish onboarding, use public reads, or manage the Auth session. Supabase session tokens use platform-protected storage. Initialize session state once, listen for Auth changes and refresh, and never persist JWTs in the content cache.
+- Sign-out clears session-bound data from memory and detaches the device server-side while credentials still work. Coordinate with the outbox by pausing it and keeping any preserved unsynced edits isolated to the same account. Revoke or rotate the locally enrolled FCM token when signing out or switching identity, and never show a previous account's cached content. Device binding has a finite lease and expires if offline sign-out prevents immediate server detachment. Generic push copy makes an already queued delivery safe.
+- Account deletion requires an authenticated, freshly re-verified action. The privileged Edge workflow makes the account unavailable before cleaning up Storage and Auth. Existing JWTs cannot read or write as a deleted or deleting account. Make cleanup retryable and show a generic restricted state for old links.
+
+Only project URL, publishable key, and public Firebase client config ship in Flutter. TMDB read-access token, Supabase server secret, worker authentication, SMTP credentials, APNs sender credentials and FCM service-account material stay in their respective secret stores. Never log credentials, reset links, review bodies, tokens, or installation identifiers. Configure custom Auth SMTP and delivery monitoring for production. [Supabase API keys](https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys) · [Edge authentication](https://supabase.com/docs/guides/functions/auth)
+
+## Catalog and TMDB
+
+Use one allowlisted `catalog` Edge Function for Discover and search, catalog hydration, person filmography, and controlled refresh requests. Public browse respects the same catalog scope as PostgreSQL. TMDB IDs are mapped to stable Taspa UUIDs on import, so tracking and share links survive episode renumbering and upstream corrections. Store localized display metadata, aliases and original titles as needed for launch, date evidence, and image paths. Store raw upstream responses only in bounded, expiring cache entries when necessary. Version the normalized response; write catalog hierarchy and availability updates atomically. Cold result selections hydrate a title before tracking. Respect profile and block rules by doing user search through PostgreSQL independently of TMDB.
+
+Use TMDB v3 with a server-side application bearer credential. Fetch only predefined resource types and IDs, cap lengths, pages and response size, set timeouts, and throttle guest and signed-in traffic before upstream calls. Cache by operation, locale, region, parameters and page. Initial TTLs are 15 minutes for normalized search, 2 hours for discovery, and 24 hours for details/credits, with due active releases refreshed separately. Collapse duplicate cache misses with a short per-key lease. On upstream failure return stale data with an age label where permitted and schedule bounded retries. Honor upstream Retry-After. Serve normalized public records directly if ready, and let the Edge path hydrate or refresh rather than proxy every screen read. [TMDB application authentication](https://developer.themoviedb.org/docs/authentication-application)
+
+Import title, credits, seasons, episodes and minimal people data for known titles, with related results populated on demand. Use an authoritative full season snapshot before retiring missing episode metadata. Never merge records merely by title, season number or episode number. Preserve prior IDs and watch records through corrections. Show uncertain release data as unknown. Use TMDB's documented attribution in About/Credits. Verify permitted caching, image uses and commercial licensing for the intended launch model before deploying with live metadata. [TMDB FAQ](https://developer.themoviedb.org/docs/faq)
+
+## Persistence, pagination and offline
+
+- PostgreSQL is authoritative across devices. A small device SQLite store holds versioned catalog snapshots, an owner-scoped library snapshot and tracking outbox, and private review drafts. Use one local SQLite adapter and restrict cache size. Keep protected social/profile responses and avatar bytes in memory only and invalidate on refresh, audience change, block, or identity change. Clear account-sensitive cache on identity change. If a user elects to retain unsynced drafts/actions at sign-out, store them separately with account-bound encryption and only restore after reauth as that user. Use the OS's protected store for the key and exclude sensitive data from backup.
+- Use stable keyset pagination for database feeds, inbox and rows, with a UUID tiebreaker and an allowlisted sort. Persist the cursor with the query, never reuse across filters or accounts, and refresh the first page after writes. TMDB uses bounded upstream pages behind the catalog contract. Cache query results locally with last-fetched time and suppress duplicate fetches. Display last good data on refresh failure.
+- Render local optimistic tracking from confirmed snapshot plus pending actions. Persist queued intent and its optimistic projection together. Serialize replay per account and title. Before first send, resolve provisional revisions for actions that depend on the same device's earlier acknowledged writes. Freeze the exact payload at first send and reuse it with the same UUID across retries. Keep the original observations for unrelated remote changes so conflicts remain visible. Unknown metadata can block bulk operations while allowing individual eligible operations. Keep review drafts offline and require connectivity for publishing and other social actions.
+- Send observed row revisions and any catalog revision used to preview a batch. Conflict returns the current authoritative state and a route to reapply after the user reviews it. Unrelated edits do not invalidate a single-episode or single-viewing edit. On reconnect replay known operations with bounded backoff and jitter. Preserve failed input, stop on authorization or permanent validation errors, and display Pending, Retry, or a clear conflict. Honor the operation retry and receipt retention windows in the database contract. Never retry an ambiguous write with a new operation UUID.
+- Apply Undo through the same durable queue. Collapse an unsubmitted action locally when safe. Otherwise reconcile its acknowledgement, then use its server receipt. Keep existing edits that changed after the operation and explain partial undo. Use system accessibility timeouts for the visible Undo action. Normal history and episode edits remain available.
+
+## Sync and notifications
+
+Maintain a bounded due queue in Postgres. Cron invokes the internal maintenance Edge Function with a worker-only credential from Vault. Import due records in small leased batches, prioritizing tracked ongoing/returning shows and Wanted titles with a near release. Conservatively refresh completed tracked shows on a slower cadence so reversals and returning seasons are eventually detected. In one SQL transaction per authoritative import, publish catalog changes and eligible release events, with deterministic dedupe. Derive completion and next gap from current release data. Keep dates and manual statuses on metadata changes.
+
+Use in-app inbox as the durable notification record. Social transitions create or group entries transactionally. Release candidates are checked again using the recipient's current membership, status, preferences and date evidence. An internal worker claims eligible per-device deliveries and checks permissions, preferences and device ownership immediately before sending. Use a dedicated least-privilege FCM service account from Edge secrets to mint short-lived OAuth tokens. Push holds an opaque notification identifier and generic copy only. Device app fetches current inbox content under user authorization before opening any referenced target. [Supabase scheduled functions](https://supabase.com/docs/guides/functions/schedule-functions) · [FCM HTTP v1](https://firebase.google.com/docs/cloud-messaging/send/v1-api)
+
+Use notification permissions when the user opts in, and handle platform/device token registration, refresh and invalidation. Retire invalid provider tokens, distinguish permanent rejections from retryable failures, and use backoff plus stable notification identifiers for duplicate handling. After launching or resuming, refresh inbox, affected tracked titles, and Following. Keep Realtime out of the launch path. If profiling shows the foreground inbox needs sub-refresh latency, use a private, authorized per-user invalidation channel carrying no notification content, and continue querying under access rules. [FCM Flutter setup](https://firebase.google.com/docs/cloud-messaging/flutter/get-started) · [Receiving mobile messages](https://firebase.google.com/docs/cloud-messaging/flutter/receive-messages)
+
+## Operational defaults and boundaries
+
+Use direct Supabase reads and scoped updates for simple resources, transactional RPCs for multi-entity writes or shaped sensitive reads, Edge Functions for foreign calls and privileged workflows. Keep DB projection, indexing and paging work close to the data. Collect aggregate job lag, retry/error counts, cache hit rate, 429s, and DB query latency using Supabase tooling. Start with small bounded schedules, provider quotas, and a defined data-retention policy. Inspect actual bottlenecks before adding infrastructure. Preview restores, alert on queue age, and keep support procedures for incorrect metadata and reports.
+
+The schema and API define Phase MVP behavior. Favorites and custom collections remain V1.1. The launch market, monetization, TMDB license, legal retention/export policy, and confirmed SMTP setup are launch dependencies mapped in the plan.

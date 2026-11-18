@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "341525668634",
+    "project_id": "taspa-4ea43",
+    "storage_bucket": "taspa-4ea43.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:341525668634:android:79095078b8a3bf565102a3",
+        "android_client_info": {
+          "package_name": "com.taspa.taspa"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAn2ujkaEfbgvL2yKe5hgjLJ-6OJHb_saE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowSplashScreenBackground">@color/taspa_canvas</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/taspa_splash_mark_android12</item>
+        <item name="android:windowBackground">@color/taspa_canvas</item>
+    </style>
+</resources>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <group
+        android:pivotX="128"
+        android:pivotY="128"
+        android:scaleX="0.333333"
+        android:scaleY="0.333333">
+        <path
+            android:fillColor="@color/taspa_coral"
+            android:pathData="M38 52 H218 L180 90 H150 V180 L108 222 V90 H38 Z" />
+    </group>
+</vector>

@@ -1,0 +1,42 @@
+project_id = "taspa"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["api", "public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[db.seed]
+enabled = false
+
+[db.vault]
+taspa_worker_key = "env(TASPA_WORKER_KEY)"
+taspa_project_url = "env(TASPA_PROJECT_URL)"
+
+[auth]
+enabled = true
+additional_redirect_urls = ["com.taspa.taspa://auth-callback"]
+
+[auth.email]
+enabled = true
+enable_confirmations = true
+
+[functions.catalog]
+verify_jwt = false
+
+[functions.maintenance]
+verify_jwt = false
+
+[functions.avatar]
+verify_jwt = false
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.share]
+verify_jwt = false

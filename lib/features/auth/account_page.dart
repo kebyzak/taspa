@@ -1,0 +1,325 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../core/backend_config.dart';
+import '../../core/offline_store.dart';
+import '../notifications/notifications.dart';
+import 'auth_cubit.dart';
+
+enum _Form { signIn, signUp, forgot, verify, recoveryCode }
+
+class AccountPage extends StatefulWidget {
+  const AccountPage({super.key, this.returnTo});
+  final String? returnTo;
+
+  @override
+  State<AccountPage> createState() => _AccountPageState();
+}
+
+class _AccountPageState extends State<AccountPage> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _handle = TextEditingController();
+  final _code = TextEditingController();
+  _Form _form = _Form.signIn;
+  bool _saving = false;
+  String? _message;
+
+  @override
+  void dispose() {
+    for (final controller in [_email, _password, _handle, _code]) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final account = context.read<AccountCubit>();
+    final auth = Supabase.instance.client.auth;
+    final email = _email.text.trim();
+    setState(() {
+      _saving = true;
+      _message = null;
+    });
+    try {
+      switch (account.state.phase) {
+        case AccountPhase.needsHandle:
+          await account.claim(_handle.text.trim());
+        case AccountPhase.recovery:
+          await account.changePassword(_password.text);
+        case AccountPhase.unavailable:
+          await account.refresh();
+        case AccountPhase.guest:
+          switch (_form) {
+            case _Form.signIn:
+              await auth.signInWithPassword(
+                email: email,
+                password: _password.text,
+              );
+            case _Form.signUp:
+              await auth.signUp(
+                email: email,
+                password: _password.text,
+                emailRedirectTo: authCallback,
+              );
+              if (mounted) {
+                setState(() {
+                  _form = _Form.verify;
+                  _message =
+                      'Check your email for a verification link or code.';
+                });
+              }
+            case _Form.forgot:
+              await auth.resetPasswordForEmail(email, redirectTo: authCallback);
+              if (mounted) {
+                setState(() {
+                  _form = _Form.recoveryCode;
+                  _message = 'If the address is registered, a reset message will arrive shortly.';
+                });
+              }
+            case _Form.verify:
+            case _Form.recoveryCode:
+              await auth.verifyOTP(
+                type: _form == _Form.verify ? OtpType.signup : OtpType.recovery,
+                email: email,
+                token: _code.text.trim(),
+              );
+          }
+        case AccountPhase.loading:
+        case AccountPhase.ready:
+          break;
+      }
+    } on AuthException catch (error) {
+      if (mounted) {
+        setState(() {
+          _message = error.code == 'email_not_confirmed'
+              ? 'Verify your email before signing in.'
+              : 'That request could not be completed. Check your details and try again.';
+        });
+      }
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        setState(() {
+          _message = switch (error.code) {
+            '23505' => 'That handle is taken.',
+            '22023' => 'Use 3–24 lowercase letters, numbers, or underscores.',
+            _ => 'Profile setup is unavailable. Try again.',
+          };
+        });
+      }
+    } on Exception {
+      if (mounted) setState(() => _message = 'Could not connect. Try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _switchForm(_Form form) => setState(() {
+    _form = form;
+    _message = null;
+  });
+
+  Future<void> _deleteAccount() async {
+    String password = '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('Permanently delete your account?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Your library, reviews and profile will be removed.'),
+            TextField(
+              onChanged: (value) => password = value,
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              decoration: const InputDecoration(labelText: 'Current password'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancel')),
+          TextButton(onPressed: () { if (password.isNotEmpty) Navigator.pop(dialog, true); }, child: const Text('Delete account')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final client = Supabase.instance.client;
+    final push = context.read<AndroidPush>();
+    final store = context.read<OfflineStore>();
+    final id = client.auth.currentUser?.id;
+    setState(() { _saving = true; _message = null; });
+    try {
+      await client.functions.invoke('delete-account', body: {'confirm': true, 'password': password});
+      await push.beforeSignOut().catchError((Object _) {});
+      await client.auth.signOut(scope: SignOutScope.local);
+      if (id != null) await store.forgetEdits(id).catchError((Object _) {});
+      if (mounted) context.go('/discover');
+    } on FunctionException catch (error) {
+      if (mounted) {
+        setState(() => _message = error.status == 403
+          ? 'Check your current password and try again.'
+          : 'Could not confirm account deletion. Try again.');
+      }
+    } on Exception {
+      if (mounted) setState(() => _message = 'Could not confirm account deletion. Try again.');
+    } finally {
+      password = '';
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _signOut(String owner) async {
+    final store = context.read<OfflineStore>();
+    final push = context.read<AndroidPush>();
+    setState(() { _saving = true; _message = null; });
+    try {
+      if (await store.hasEdits(owner)) {
+        if (!mounted) return;
+        final keep = await showDialog<bool>(context: context, builder: (dialog) => AlertDialog(
+          title: const Text('Keep unsynced changes?'),
+          content: const Text('You can restore saved drafts and pending changes when you sign in to this account again.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(dialog, false), child: const Text('Discard')),
+            TextButton(onPressed: () => Navigator.pop(dialog, true), child: const Text('Keep on this device')),
+          ],
+        ));
+        if (keep == null) return;
+        if (!keep) await store.forgetEdits(owner);
+      }
+      await push.beforeSignOut().catchError((Object _) {});
+      await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
+    } on Exception {
+      if (mounted) setState(() => _message = 'Could not sign out. Try again.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final account = context.watch<AccountCubit>().state;
+    final phase = account.phase;
+    final label = switch (phase) {
+      AccountPhase.needsHandle => 'Choose a handle',
+      AccountPhase.recovery => 'New password',
+      AccountPhase.unavailable => 'Try again',
+      _ => switch (_form) {
+        _Form.signIn => 'Sign in',
+        _Form.signUp => 'Create account',
+        _Form.forgot => 'Send reset email',
+        _Form.verify => 'Verify email',
+        _Form.recoveryCode => 'Verify code',
+      },
+    };
+    return BlocListener<AccountCubit, Account>(
+      listenWhen: (previous, current) =>
+          previous.phase != AccountPhase.ready &&
+          current.phase == AccountPhase.ready,
+      listener: (context, state) {
+        final route = widget.returnTo;
+        if (route != null &&
+            (route.startsWith('/titles/') || route == '/library')) {
+          if (context.canPop()) {
+            context.pop();
+          } else {
+            context.go(route);
+          }
+        }
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            phase == AccountPhase.ready ? 'Profile' : label,
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 24),
+          if (phase == AccountPhase.loading) const LinearProgressIndicator(),
+          if (phase == AccountPhase.ready) ...[
+            Text('@${account.handle}'),
+            const SizedBox(height: 24),
+            OutlinedButton(
+              onPressed: _saving ? null : () => _signOut(account.userId!),
+              child: const Text('Sign out'),
+            ),
+            TextButton(onPressed: _saving ? null : _deleteAccount, child: const Text('Delete account')),
+            TextButton(onPressed: () => context.push('/help'), child: const Text('Help')),
+          ],
+          if (phase == AccountPhase.guest)
+            TextField(
+              controller: _email,
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [AutofillHints.email],
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
+          if (phase == AccountPhase.needsHandle)
+            TextField(
+              controller: _handle,
+              decoration: const InputDecoration(labelText: 'Handle'),
+              autocorrect: false,
+            ),
+          if (phase == AccountPhase.recovery ||
+              (phase == AccountPhase.guest &&
+                  (_form == _Form.signUp || _form == _Form.signIn))) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _password,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+          ],
+          if (phase == AccountPhase.guest &&
+              (_form == _Form.verify || _form == _Form.recoveryCode)) ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _code,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Email code'),
+            ),
+          ],
+          if (_message case final message?) ...[
+            const SizedBox(height: 12),
+            Semantics(liveRegion: true, child: Text(message)),
+          ],
+          if (phase != AccountPhase.ready && phase != AccountPhase.loading) ...[
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _saving ? null : _submit,
+              child: Text(_saving ? 'Working…' : label),
+            ),
+          ],
+          if (phase == AccountPhase.guest)
+            Wrap(
+              children: [
+                if (_form != _Form.signIn)
+                  TextButton(
+                    onPressed: () => _switchForm(_Form.signIn),
+                    child: const Text('Sign in'),
+                  ),
+                if (_form != _Form.signUp)
+                  TextButton(
+                    onPressed: () => _switchForm(_Form.signUp),
+                    child: const Text('Create account'),
+                  ),
+                if (_form == _Form.signIn)
+                  TextButton(
+                    onPressed: () => _switchForm(_Form.forgot),
+                    child: const Text('Forgot password'),
+                  ),
+                if (_form == _Form.signIn)
+                  TextButton(
+                    onPressed: () => _switchForm(_Form.verify),
+                    child: const Text('Enter verification code'),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
