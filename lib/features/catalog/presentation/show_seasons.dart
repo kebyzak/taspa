@@ -207,7 +207,8 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     if (tracked == null || widget.pending) return;
     final numbered = (_selected?.number ?? 0) > 0;
     final canMark = tracked.intent != null || numbered;
-    final action = await showModalBottomSheet<String>(useRootNavigator: true, 
+    final action = await showModalBottomSheet<String>(
+      useRootNavigator: true,
       context: context,
       builder: (context) => SafeArea(
         child: Column(
@@ -216,26 +217,47 @@ class _ShowSeasonsState extends State<ShowSeasons> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-              child: Text('E${episode.number} · ${episode.title}', style: Theme.of(context).textTheme.titleLarge),
+              child: Text(
+                'E${episode.number} · ${episode.title}',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
             ),
             if (episode.watched)
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                child: Text('Watched · ${episode.watchedOn ?? 'Date unknown'}', style: Theme.of(context).textTheme.bodySmall),
+                child: Text(
+                  'Watched · ${episode.watchedOn ?? 'Date unknown'}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
             if (!episode.watched && canMark)
-              ListTile(leading: const Icon(PhosphorIconsRegular.checkCircle), title: const Text('Mark watched'),
-                onTap: () => Navigator.pop(context, 'mark')),
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.checkCircle),
+                title: const Text('Mark watched'),
+                onTap: () => Navigator.pop(context, 'mark'),
+              ),
             if (numbered)
-              ListTile(leading: const Icon(PhosphorIconsRegular.checks), title: Text('Mark watched up to E${episode.number}'),
-                onTap: () => Navigator.pop(context, 'through')),
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.checks),
+                title: Text('Mark watched up to E${episode.number}'),
+                onTap: () => Navigator.pop(context, 'through'),
+              ),
             if (episode.watched) ...[
-              ListTile(leading: const Icon(PhosphorIconsRegular.calendarBlank), title: const Text('Edit watch date'),
-                onTap: () => Navigator.pop(context, 'date')),
-              ListTile(leading: const Icon(PhosphorIconsRegular.calendarX), title: const Text('Clear date'),
-                onTap: () => Navigator.pop(context, 'clear')),
-              ListTile(leading: const Icon(PhosphorIconsRegular.xCircle), title: const Text('Mark unwatched'),
-                onTap: () => Navigator.pop(context, 'unwatch')),
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.calendarBlank),
+                title: const Text('Edit watch date'),
+                onTap: () => Navigator.pop(context, 'date'),
+              ),
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.calendarX),
+                title: const Text('Clear date'),
+                onTap: () => Navigator.pop(context, 'clear'),
+              ),
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.xCircle),
+                title: const Text('Mark unwatched'),
+                onTap: () => Navigator.pop(context, 'unwatch'),
+              ),
             ],
             const SizedBox(height: 8),
           ],
@@ -244,7 +266,11 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     );
     if (action == null || !mounted) return;
     if (action == 'through') {
-      await _batch('mark_through', 'Mark through episode ${episode.number}?', episode: episode.id);
+      await _batch(
+        'mark_through',
+        'Mark through episode ${episode.number}?',
+        episode: episode.id,
+      );
     } else {
       await _change(episode, action);
     }
@@ -261,28 +287,56 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     final numbered = (selected?.number ?? 0) > 0;
     final watchedCount = released.where((e) => e.watched).length;
     final batch = [
-      if (numbered) ('mark_season_watched', 'Mark season watched', 'Mark released episodes watched?'),
-      if (numbered && tracked?.intent != null) ('mark_season_unwatched', 'Mark season unwatched', 'Mark this season unwatched?'),
-      if (['Ended','Canceled'].contains(widget.show.releaseStatus))
-        ('mark_ended_show_watched', 'Mark all released episodes watched', 'Mark all released episodes watched?'),
-      if (tracked?.intent != null) ('remove_show', 'Remove show tracking', 'Remove show tracking?'),
+      if (numbered)
+        (
+          'mark_season_watched',
+          'Mark season watched',
+          'Mark released episodes watched?',
+        ),
+      if (numbered && tracked?.intent != null)
+        (
+          'mark_season_unwatched',
+          'Mark season unwatched',
+          'Mark this season unwatched?',
+        ),
+      if (['Ended', 'Canceled'].contains(widget.show.releaseStatus))
+        (
+          'mark_ended_show_watched',
+          'Mark all released episodes watched',
+          'Mark all released episodes watched?',
+        ),
+      if (tracked?.intent != null)
+        ('remove_show', 'Remove show tracking', 'Remove show tracking?'),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 24),
-        SectionHeader('Seasons', padding: EdgeInsets.zero, trailing: tracked == null || batch.isEmpty ? null : PopupMenuButton<String>(
-          tooltip: 'Season actions',
-          enabled: !busy,
-          icon: const Icon(PhosphorIconsRegular.dotsThree),
-          onSelected: (scope) {
-            final (_, _, question) = batch.firstWhere((item) => item.$1 == scope);
-            _batch(scope, question, season: scope.contains('season') ? selected!.id : null);
-          },
-          itemBuilder: (context) => [
-            for (final (scope, label, _) in batch) PopupMenuItem(value: scope, child: Text(label)),
-          ],
-        )),
+        SectionHeader(
+          'Seasons',
+          padding: EdgeInsets.zero,
+          trailing: tracked == null || batch.isEmpty
+              ? null
+              : PopupMenuButton<String>(
+                  tooltip: 'Season actions',
+                  enabled: !busy,
+                  icon: const Icon(PhosphorIconsRegular.dotsThree),
+                  onSelected: (scope) {
+                    final (_, _, question) = batch.firstWhere(
+                      (item) => item.$1 == scope,
+                    );
+                    _batch(
+                      scope,
+                      question,
+                      season: scope.contains('season') ? selected!.id : null,
+                    );
+                  },
+                  itemBuilder: (context) => [
+                    for (final (scope, label, _) in batch)
+                      PopupMenuItem(value: scope, child: Text(label)),
+                  ],
+                ),
+        ),
         if (_seasons.isNotEmpty)
           SizedBox(
             height: 48,
@@ -294,7 +348,11 @@ class _ShowSeasonsState extends State<ShowSeasons> {
                 final season = _seasons[index];
                 final active = season.id == selected?.id;
                 return ChoiceChip(
-                  label: Text(season.number > 0 ? 'Season ${season.number}' : season.title),
+                  label: Text(
+                    season.number > 0
+                        ? 'Season ${season.number}'
+                        : season.title,
+                  ),
                   tooltip: season.title,
                   selected: active,
                   onSelected: (_) => _load(season),
@@ -302,10 +360,18 @@ class _ShowSeasonsState extends State<ShowSeasons> {
               },
             ),
           ),
-        if (_loading) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: LinearProgressIndicator(),
+          ),
         if (_failed)
-          InlineNotice('Could not load episodes.', icon: PhosphorIconsRegular.warningCircle, action: 'Retry',
-            onAction: selected == null ? _loadSeasons : () => _load(selected)),
+          InlineNotice(
+            'Could not load episodes.',
+            icon: PhosphorIconsRegular.warningCircle,
+            action: 'Retry',
+            onAction: selected == null ? _loadSeasons : () => _load(selected),
+          ),
         if (!_loading && !_failed && _seasons.isEmpty)
           const InlineNotice('Season information is unavailable.'),
         if (selected != null && widget.show.id != null)
@@ -317,49 +383,99 @@ class _ShowSeasonsState extends State<ShowSeasons> {
           ),
         if (tracked != null && released.isNotEmpty) ...[
           const SizedBox(height: 16),
-          Row(children: [
-            Expanded(child: Text(selected?.title ?? 'Episodes', style: theme.textTheme.titleMedium)),
-            Text('$watchedCount/${released.length} watched', style: theme.textTheme.bodySmall),
-          ]),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  selected?.title ?? 'Episodes',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              Text(
+                '$watchedCount/${released.length} watched',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
-          LinearProgressIndicator(value: watchedCount / released.length, semanticsLabel: 'Season episodes watched',
-            semanticsValue: '$watchedCount of ${released.length}'),
+          LinearProgressIndicator(
+            value: watchedCount / released.length,
+            semanticsLabel: 'Season episodes watched',
+            semanticsValue: '$watchedCount of ${released.length}',
+          ),
         ],
         const SizedBox(height: 8),
         for (final episode in released)
           InkWell(
-            onTap: tracked == null || widget.pending ? null : () => _episodeSheet(episode),
+            onTap: tracked == null || widget.pending
+                ? null
+                : () => _episodeSheet(episode),
             borderRadius: BorderRadius.circular(12),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(children: [
-                SizedBox(
-                  width: 40,
-                  child: Text('${episode.number}', textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: mutedColor)),
-                ),
-                const SizedBox(width: 8),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(episode.title, maxLines: 2, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                  Text(episode.watched ? 'Watched · ${episode.watchedOn ?? 'Date unknown'}' : 'Unwatched',
-                    style: theme.textTheme.bodySmall),
-                ])),
-                if (tracked != null)
-                  episode.watched
-                      ? IconButton(
-                          tooltip: 'Episode ${episode.number} actions',
-                          onPressed: widget.pending ? null : () => _episodeSheet(episode),
-                          icon: const Icon(PhosphorIconsFill.checkCircle, color: coralColor),
-                        )
-                      : IconButton(
-                          tooltip: 'Mark episode ${episode.number} watched',
-                          onPressed: widget.pending || !(tracked.intent != null || numbered)
-                              ? null
-                              : () => _change(episode, 'mark'),
-                          icon: const Icon(PhosphorIconsRegular.circle, color: mutedColor),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 40,
+                    child: Text(
+                      '${episode.number}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: mutedColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          episode.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-              ]),
+                        Text(
+                          episode.watched
+                              ? 'Watched · ${episode.watchedOn ?? 'Date unknown'}'
+                              : 'Unwatched',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (tracked != null)
+                    episode.watched
+                        ? IconButton(
+                            tooltip: 'Episode ${episode.number} actions',
+                            onPressed: widget.pending
+                                ? null
+                                : () => _episodeSheet(episode),
+                            icon: const Icon(
+                              PhosphorIconsFill.checkCircle,
+                              color: coralColor,
+                            ),
+                          )
+                        : IconButton(
+                            tooltip: 'Mark episode ${episode.number} watched',
+                            onPressed:
+                                widget.pending ||
+                                    !(tracked.intent != null || numbered)
+                                ? null
+                                : () => _change(episode, 'mark'),
+                            icon: const Icon(
+                              PhosphorIconsRegular.circle,
+                              color: mutedColor,
+                            ),
+                          ),
+                ],
+              ),
             ),
           ),
         if (upcoming.isNotEmpty) ...[
@@ -368,13 +484,33 @@ class _ShowSeasonsState extends State<ShowSeasons> {
           for (final episode in upcoming)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(children: [
-                SizedBox(width: 40, child: Text('${episode.number}', textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: mutedColor))),
-                const SizedBox(width: 8),
-                Expanded(child: Text(episode.title, style: const TextStyle(fontSize: 15))),
-                Text(episode.releaseDay ?? 'Date unknown', style: theme.textTheme.bodySmall),
-              ]),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 40,
+                    child: Text(
+                      '${episode.number}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: mutedColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      episode.title,
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ),
+                  Text(
+                    episode.releaseDay ?? 'Date unknown',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
         ],
       ],

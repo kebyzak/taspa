@@ -1,6 +1,6 @@
 # Taspa
 
-A movie and TV diary. Track shows episode by episode, keep a Want list, log what you watched, rate on a 1–10 scale, write reviews, follow friends, and bring your whole library over from Must.
+A movie and TV diary. Track shows episode by episode, keep a Want list, log what you watched, rate with up to 5 stars in half-star steps, write reviews, follow friends, and bring your whole library over from Must.
 
 Built with Flutter on top of Supabase (Postgres, Auth, Storage, Edge Functions) with TMDB as the catalog source.
 

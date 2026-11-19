@@ -14,9 +14,9 @@ import '../../catalog/presentation/discover_page.dart';
 import '../data/library_repository.dart';
 import 'tracking_cubit.dart';
 
-/// Library tab: Shows (tracking + Want shows below) and Movies (Want movies) behind chips.
 class LibraryTab extends StatefulWidget {
   const LibraryTab({super.key, this.movies = false});
+
   final bool movies;
 
   @override
@@ -25,7 +25,6 @@ class LibraryTab extends StatefulWidget {
 
 class _LibraryTabState extends State<LibraryTab> {
   late int _index = widget.movies ? 1 : 0;
-  // Movies is built on first visit so opening the app costs only the Shows requests.
   late final _visited = {_index};
 
   @override
@@ -77,9 +76,8 @@ class _LibraryTabState extends State<LibraryTab> {
 
 class LibraryPage extends StatelessWidget {
   const LibraryPage({super.key, required this.section, this.media});
-  final LibrarySection section;
 
-  /// Fixed media filter; hides the All / Movies / Shows chips.
+  final LibrarySection section;
   final MediaKind? media;
 
   @override
@@ -109,6 +107,7 @@ class LibraryPage extends StatelessWidget {
 
 class _LibraryBody extends StatefulWidget {
   const _LibraryBody({super.key, required this.section, this.media});
+
   final LibrarySection section;
   final MediaKind? media;
 
@@ -119,7 +118,6 @@ class _LibraryBody extends StatefulWidget {
 class _LibraryBodyState extends State<_LibraryBody> {
   late final LibrarySection _section = widget.section;
   late MediaKind? _filter = widget.media;
-  // Shows tab only: Want shows listed under the tracked ones; the filter sheet can hide them.
   bool _showWant = true;
   List<LibraryEntry> _wantShows = [];
   LibraryEntry? _wantCursor;
@@ -227,9 +225,10 @@ class _LibraryBodyState extends State<_LibraryBody> {
         _wantCursor = page.cursor;
       });
     } on Exception catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(trackingMessage(error))));
+      }
     }
   }
 
@@ -242,17 +241,17 @@ class _LibraryBodyState extends State<_LibraryBody> {
     final id = entry.title.id!;
     final key = '$id:$action';
     final repo = context.read<LibraryRepository>();
+    final catalog = context.read<CatalogRepository>();
     if (_busy.contains(id)) return;
     setState(() => _busy.add(id));
     try {
       var command = _pending[key];
       if (command == null) {
         var snapshot = entry.progress ?? await repo.snapshot(id);
-        // The next episode may sit in a season that was never opened; load it, then re-read progress.
         if (action == 'set_episode_watched' &&
             snapshot.next == null &&
             snapshot.pendingSeason != null) {
-          await context.read<CatalogRepository>().hydrateSeason(
+          await catalog.hydrateSeason(
             entry.title.tmdbId,
             snapshot.pendingSeason!,
           );
@@ -287,7 +286,6 @@ class _LibraryBodyState extends State<_LibraryBody> {
       _pending.remove(key);
       if (!mounted) return;
       if (action == 'set_episode_watched') {
-        // Quiet one-tap mark: update the counter in place; the change stream reorders the list.
         setState(
           () => _rows = [
             for (final row in _rows)
@@ -545,13 +543,18 @@ class _LibraryBodyState extends State<_LibraryBody> {
       _minimumRating != null ||
       _filter != widget.media;
 
-  /// Behind = a released episode is still unwatched (possibly in a season not loaded yet).
   bool _behind(TrackingState? progress) =>
       progress != null &&
       (progress.next != null ||
           (progress.intent == 'watching' && progress.pendingSeason != null));
 
-  /// Bingers-style show row: next episode, 30/35 counter and a one-tap check for the next one.
+  static final _smallAction = IconButton.styleFrom(
+    minimumSize: const Size(32, 32),
+    fixedSize: const Size(32, 32),
+    padding: EdgeInsets.zero,
+    tapTargetSize: MaterialTapTargetSize.padded,
+  );
+
   Widget _showRow(LibraryEntry entry, {required bool dimmed}) {
     final title = entry.title;
     final progress = entry.progress;
@@ -637,21 +640,17 @@ class _LibraryBodyState extends State<_LibraryBody> {
                   onPressed: busy
                       ? null
                       : () => _track(entry, 'set_episode_watched'),
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(40, 40),
-                    fixedSize: const Size(40, 40),
-                    padding: EdgeInsets.zero,
-                  ),
+                  style: _smallAction,
                   icon: busy
                       ? const SizedBox(
-                          width: 18,
-                          height: 18,
+                          width: 14,
+                          height: 14,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
                             color: onCoralColor,
                           ),
                         )
-                      : const Icon(PhosphorIconsBold.check, size: 20),
+                      : const Icon(PhosphorIconsBold.check, size: 16),
                 )
               else
                 const SizedBox(
@@ -674,7 +673,6 @@ class _LibraryBodyState extends State<_LibraryBody> {
     );
   }
 
-  /// Want and movie list row: poster, release info, one quick action and the overflow menu.
   Widget _row(LibraryEntry entry, {bool want = false}) {
     final title = entry.title;
     final progress = entry.progress;
@@ -687,7 +685,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
       title.caption,
       if (wanted && upcoming)
         'Out ${MaterialLocalizations.of(context).formatShortDate(release!)}',
-      if (entry.rating case final stars?) '★ $stars',
+      if (entry.rating case final score?) '★ ${starsText(score)}',
       ?entry.watchedOn,
     ].join(' · ');
     Widget? action;
@@ -695,13 +693,15 @@ class _LibraryBodyState extends State<_LibraryBody> {
       action = IconButton.filledTonal(
         tooltip: 'Mark ${title.name} watched',
         onPressed: busy ? null : () => _track(entry, 'mark_movie_watched'),
-        icon: const Icon(PhosphorIconsBold.check),
+        style: _smallAction,
+        icon: const Icon(PhosphorIconsBold.check, size: 16),
       );
     } else if (wanted && (progress?.released ?? 0) > 0) {
       action = IconButton.filledTonal(
         tooltip: 'Start watching ${title.name}',
         onPressed: busy ? null : () => _track(entry, 'start_show'),
-        icon: const Icon(PhosphorIconsFill.play),
+        style: _smallAction,
+        icon: const Icon(PhosphorIconsFill.play, size: 16),
       );
     }
     return Padding(
@@ -937,7 +937,6 @@ class _LibraryBodyState extends State<_LibraryBody> {
             )
           else if (!shows)
             for (final entry in _rows) _row(entry),
-          // Shows: catching up first, then Want, and finished ("Up to date") shows last.
           if (shows)
             for (final entry in continuing) _showRow(entry, dimmed: false),
           if (shows && _showWant && _wantShows.isNotEmpty) ...[

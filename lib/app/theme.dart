@@ -22,9 +22,8 @@ const _label = TextStyle(
 const _corners = RoundedRectangleBorder(
   borderRadius: BorderRadius.all(Radius.circular(12)),
 );
-// Selected chips are ivory pills, so their label flips to graphite.
 const _chipLabel = WidgetStateColor.fromMap({
-  WidgetState.selected: canvasColor,
+  WidgetState.selected: onCoralColor,
   WidgetState.any: inkColor,
 });
 const _field = OutlineInputBorder(
@@ -33,14 +32,13 @@ const _field = OutlineInputBorder(
 );
 
 ThemeData taspaTheme() {
-  // secondary/tertiary set explicitly so no Material default (teal) leaks into chips or toggles.
   const scheme = ColorScheme.dark(
     primary: coralColor,
     onPrimary: onCoralColor,
     secondary: coralColor,
     onSecondary: onCoralColor,
-    secondaryContainer: selectedColor,
-    onSecondaryContainer: inkColor,
+    secondaryContainer: coralColor,
+    onSecondaryContainer: onCoralColor,
     tertiary: coralColor,
     surface: canvasColor,
     surfaceContainerLowest: canvasColor,
@@ -115,7 +113,6 @@ ThemeData taspaTheme() {
         textStyle: WidgetStatePropertyAll(_label),
       ),
     ),
-    // Quiet text actions are neutral; coral is reserved for primary fills and state.
     textButtonTheme: const TextButtonThemeData(
       style: ButtonStyle(
         minimumSize: WidgetStatePropertyAll(Size(48, 48)),
@@ -129,7 +126,7 @@ ThemeData taspaTheme() {
     ),
     chipTheme: const ChipThemeData(
       backgroundColor: surfaceColor,
-      selectedColor: inkColor,
+      selectedColor: coralColor,
       side: BorderSide.none,
       shape: StadiumBorder(),
       showCheckmark: false,
@@ -257,7 +254,6 @@ ThemeData taspaTheme() {
   );
 }
 
-/// Section title with an optional "See all" chevron, used above shelves and lists.
 class SectionHeader extends StatelessWidget {
   const SectionHeader(
     this.title, {
@@ -266,6 +262,7 @@ class SectionHeader extends StatelessWidget {
     this.trailing,
     this.padding = const EdgeInsets.fromLTRB(16, 0, 4, 8),
   });
+
   final String title;
   final VoidCallback? onMore;
   final Widget? trailing;
@@ -303,7 +300,6 @@ class SectionHeader extends StatelessWidget {
   );
 }
 
-/// Poster with title and caption below; the shared unit for shelves and grids.
 class PosterCard extends StatelessWidget {
   const PosterCard({
     super.key,
@@ -313,6 +309,7 @@ class PosterCard extends StatelessWidget {
     this.badge,
     required this.onTap,
   });
+
   final String? poster;
   final String title;
   final String? caption;
@@ -396,9 +393,9 @@ class PosterCard extends StatelessWidget {
   );
 }
 
-/// Horizontal carousel of fixed-width items; shows placeholder posters while [children] is null.
 class Shelf extends StatelessWidget {
   const Shelf({super.key, required this.children, this.itemWidth = 112});
+
   final List<Widget>? children;
   final double itemWidth;
 
@@ -432,7 +429,6 @@ class Shelf extends StatelessWidget {
   }
 }
 
-/// Large icon-over-label action, used for the main tracking controls on detail pages.
 class ActionTile extends StatelessWidget {
   const ActionTile({
     super.key,
@@ -441,6 +437,7 @@ class ActionTile extends StatelessWidget {
     this.onTap,
     this.active = false,
   });
+
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
@@ -489,9 +486,9 @@ class ActionTile extends StatelessWidget {
   );
 }
 
-/// Circular initial avatar for people without a loaded photo.
 class Avatar extends StatelessWidget {
   const Avatar(this.handle, {super.key, this.size = 32});
+
   final String handle;
   final double size;
 
@@ -515,15 +512,18 @@ class Avatar extends StatelessWidget {
   );
 }
 
-/// Star glyph plus a 1–10 score.
+String starsText(int score) =>
+    score.isEven ? '${score ~/ 2}' : (score / 2).toStringAsFixed(1);
+
 class StarScore extends StatelessWidget {
   const StarScore(this.score, {super.key, this.large = false});
+
   final int score;
   final bool large;
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: '$score of 10',
+    label: '${starsText(score)} of 5 stars',
     excludeSemantics: true,
     child: Row(
       mainAxisSize: MainAxisSize.min,
@@ -531,7 +531,7 @@ class StarScore extends StatelessWidget {
         Icon(PhosphorIconsFill.star, size: large ? 22 : 18, color: coralColor),
         const SizedBox(width: 2),
         Text(
-          '$score',
+          starsText(score),
           style: TextStyle(
             fontSize: large ? 18 : 15,
             fontWeight: FontWeight.w600,
@@ -542,7 +542,6 @@ class StarScore extends StatelessWidget {
   );
 }
 
-/// Small status line (offline, pending, errors) with an optional action, kept on one compact row.
 class InlineNotice extends StatelessWidget {
   const InlineNotice(
     this.text, {
@@ -551,6 +550,7 @@ class InlineNotice extends StatelessWidget {
     this.action,
     this.onAction,
   });
+
   final String text;
   final IconData icon;
   final String? action;
@@ -587,7 +587,6 @@ class InlineNotice extends StatelessWidget {
   );
 }
 
-/// Shared empty state: a reason and one action, centered in the free space.
 class EmptyState extends StatelessWidget {
   const EmptyState({
     super.key,
@@ -597,6 +596,7 @@ class EmptyState extends StatelessWidget {
     this.action,
     this.secondary,
   });
+
   final IconData icon;
   final String title;
   final String message;

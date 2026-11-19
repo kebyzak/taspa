@@ -1,6 +1,3 @@
-// Phosphor Icons (MIT, see assets/fonts/Phosphor-LICENSE.txt), bundled as fonts.
-// The phosphor_flutter package extends IconData, which Flutter 3.50 made final, so only the
-// icons this app uses are declared here. Regenerate when adding an icon.
 import 'package:flutter/widgets.dart';
 
 abstract final class PhosphorIconsRegular {

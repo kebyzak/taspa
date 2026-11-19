@@ -202,7 +202,7 @@ class _InboxPageState extends State<InboxPage> {
                               ? PhosphorIconsRegular.bell
                               : PhosphorIconsRegular.bellRinging,
                         ),
-                        title: Text(_description(item.kind)),
+                        title: Text(item.message ?? _description(item.kind)),
                         subtitle: Text(
                           [
                             if (!item.read) 'Unread',

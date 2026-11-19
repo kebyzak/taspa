@@ -10,7 +10,6 @@ import '../../catalog/presentation/discover_page.dart';
 import '../../library/data/library_repository.dart';
 import '../data/social_repository.dart';
 
-/// Import a whole Must library (Want, watched movies, show progress, ratings, reviews) by public username.
 class MustImportPage extends StatefulWidget {
   const MustImportPage({super.key});
 
@@ -57,11 +56,12 @@ class _MustImportPageState extends State<MustImportPage> {
       });
       if (job?['state'] == 'running') unawaited(_run());
     } on Exception {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _loading = false;
           _error = 'Could not load the import. Pull to retry.';
         });
+      }
     }
   }
 
@@ -89,17 +89,17 @@ class _MustImportPageState extends State<MustImportPage> {
         );
       }
     } on Exception catch (error) {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _error =
               'Could not start the import. Check your connection.${kDebugMode ? '\n[$error]' : ''}',
         );
+      }
     } finally {
       if (mounted) setState(() => _starting = false);
     }
   }
 
-  /// Keeps stepping while this page is open; the server keeps progress, so leaving and coming back resumes.
   Future<void> _run() async {
     if (_running) return;
     _running = true;
@@ -114,15 +114,16 @@ class _MustImportPageState extends State<MustImportPage> {
           _job = job;
           _error = null;
         });
-        // Let Library catch up every few steps instead of only at the end.
-        if (++batches % 3 == 0 || job['state'] != 'running')
+        if (++batches % 3 == 0 || job['state'] != 'running') {
           library.notifyChanged();
+        }
       } on ImportFailure catch (failure) {
         if (failure.retryAfter == null) {
-          if (mounted)
+          if (mounted) {
             setState(
               () => _error = _messages[failure.code] ?? 'Import paused. It will continue when you open this page again.',
             );
+          }
           break;
         }
         await Future<void>.delayed(
@@ -134,7 +135,6 @@ class _MustImportPageState extends State<MustImportPage> {
     }
     _running = false;
     if (mounted && _job?['state'] == 'done') {
-      // One "Imported N titles" line appears in Feed; Profile counts change too.
       social.notifyChanged();
     }
   }

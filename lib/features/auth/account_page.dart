@@ -15,6 +15,7 @@ enum _Form { signIn, signUp, forgot, verify, recoveryCode }
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key, this.returnTo});
+
   final String? returnTo;
 
   @override
@@ -100,7 +101,6 @@ class _AccountPageState extends State<AccountPage> {
           _message = error.code == 'email_not_confirmed'
               ? 'Verify your email before signing in.'
               : 'That request could not be completed. Check your details and try again.'
-                    // Debug builds show the real Supabase reason; release keeps the neutral text.
                     '${kDebugMode ? '\n[${error.statusCode}] ${error.code}: ${error.message}' : ''}';
         });
       }
@@ -186,10 +186,11 @@ class _AccountPageState extends State<AccountPage> {
         );
       }
     } on Exception {
-      if (mounted)
+      if (mounted) {
         setState(
           () => _message = 'Could not confirm account deletion. Try again.',
         );
+      }
     } finally {
       password = '';
       if (mounted) setState(() => _saving = false);

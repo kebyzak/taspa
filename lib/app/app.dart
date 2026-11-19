@@ -27,6 +27,7 @@ import 'theme.dart';
 
 class TaspaApp extends StatefulWidget {
   const TaspaApp({super.key, required this.client});
+
   final SupabaseClient client;
 
   @override
@@ -48,7 +49,6 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
   late final GoRouter _router = GoRouter(
     initialLocation: '/discover',
     routes: [
-      // Paths from earlier builds, notifications and saved state.
       GoRoute(path: '/shows', redirect: (context, state) => '/library'),
       GoRoute(path: '/want', redirect: (context, state) => '/library'),
       GoRoute(path: '/following', redirect: (context, state) => '/feed'),
@@ -265,8 +265,9 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
     if (!mounted ||
         link.scheme != 'com.taspa.taspa' ||
         link.host != 'share' ||
-        link.pathSegments.length != 2)
+        link.pathSegments.length != 2) {
       return;
+    }
     final [kind, id] = link.pathSegments;
     if (!_shareId.hasMatch(id)) return;
     final target = switch (kind) {
@@ -274,8 +275,9 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
       'review' => '/reviews/$id',
       _ => null,
     };
-    if (target != null && _router.state.uri.path != target)
+    if (target != null && _router.state.uri.path != target) {
       _router.push(target);
+    }
   }
 
   @override
@@ -368,10 +370,11 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
           final previous = _cacheOwner;
           if (state.userId != previous) {
             _cacheOwner = state.userId;
-            if (previous != null)
+            if (previous != null) {
               unawaited(
                 _offline.forgetCache(previous).catchError((Object _) {}),
               );
+            }
           }
           PaintingBinding.instance.imageCache.clear();
           PaintingBinding.instance.imageCache.clearLiveImages();
@@ -398,6 +401,7 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
 
 class _Tabs extends StatelessWidget {
   const _Tabs({required this.shell});
+
   final StatefulNavigationShell shell;
 
   static const _labels = ['Discover', 'Library', 'Feed', 'Profile'];
@@ -440,13 +444,13 @@ class _Tabs extends StatelessWidget {
   }
 }
 
-/// Rounded tab bar: four labelled outline tabs with a round Add button in the middle.
 class _TabBar extends StatelessWidget {
   const _TabBar({
     required this.current,
     required this.onTab,
     required this.onAdd,
   });
+
   final int current;
   final ValueChanged<int> onTab;
   final VoidCallback onAdd;
@@ -509,7 +513,6 @@ class _TabBar extends StatelessWidget {
       top: false,
       minimum: const EdgeInsets.only(bottom: 4),
       child: Container(
-        // Fixed height: the bottom bar gets loose constraints, and Center would otherwise fill the screen.
         height: 64,
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(

@@ -72,8 +72,6 @@ class TrackingState {
   final bool coverage;
   final NextEpisode? next;
   final String? upcomingDay;
-
-  /// First aired season whose episodes are not loaded yet; hydrate it to find the next episode.
   final int? pendingSeason;
   final int undoSkipped;
   final String? syncStatus;
@@ -137,23 +135,26 @@ class TrackingCommand {
 
 class TrackingFailure implements Exception {
   const TrackingFailure(this.message);
+
   final String message;
 }
 
 class LibraryRepository {
   LibraryRepository(this.client, this.store);
+
   final SupabaseClient client;
   final OfflineStore store;
   final _busy = <(String, String)>{};
   final _changed = StreamController<void>.broadcast();
+
   Stream<void> get changes => _changed.stream;
+
   Future<void> dispose() => _changed.close();
 
   String _owner() =>
       client.auth.currentUser?.id ??
       (throw const TrackingFailure('Sign in to view your library.'));
 
-  /// Tells open library pages to reload after a change made outside this repository (e.g. an import).
   void notifyChanged() => _notify();
 
   void _notify() {
@@ -161,8 +162,9 @@ class LibraryRepository {
   }
 
   void _checkOwner(String owner) {
-    if (client.auth.currentUser?.id != owner)
+    if (client.auth.currentUser?.id != owner) {
       throw const TrackingFailure('Your session changed. Sign in again.');
+    }
   }
 
   Future<Map<String, dynamic>> _confirmed(String owner, String titleId) =>
@@ -189,6 +191,29 @@ class LibraryRepository {
       ...row,
       if (queued != null) 'local_sync': 'conflict',
     });
+  }
+
+  Future<Map<int, Set<String>>> marks(List<CatalogTitle> titles) async {
+    if (titles.isEmpty || client.auth.currentUser == null) return {};
+    final rows =
+        await client
+                .schema('api')
+                .rpc(
+                  'my_title_marks',
+                  params: {
+                    'tmdb_ids': [for (final title in titles) title.tmdbId],
+                  },
+                )
+            as List<dynamic>;
+    return {
+      for (final row in rows.cast<Map<String, dynamic>>())
+        if (titles.any(
+          (t) => t.tmdbId == row['tmdb_id'] && t.kind.name == row['kind'],
+        ))
+          row['tmdb_id'] as int: {
+            ...(row['marks'] as List<dynamic>).cast<String>(),
+          },
+    };
   }
 
   Future<void> rememberTitle(CatalogTitle title) async {
@@ -233,18 +258,21 @@ class LibraryRepository {
           command.titleId,
         ) as Map<String, dynamic>?;
         if (current?['operation_id'] != command.id ||
-            current?['sync'] == 'conflict')
+            current?['sync'] == 'conflict') {
           continue;
+        }
         while (current != null) {
           final next = TrackingCommand.fromMap(current);
           try {
             await _submit(owner, next);
           } on Exception catch (error) {
             if (client.auth.currentUser?.id != owner ||
-                transientReadFailure(error))
+                transientReadFailure(error)) {
               return;
-            if (error is! TrackingFailure && error is! PostgrestException)
+            }
+            if (error is! TrackingFailure && error is! PostgrestException) {
               rethrow;
+            }
             await store.write(owner, 'outbox', command.titleId, {
               ...current,
               'sync': 'conflict',
@@ -268,8 +296,10 @@ class LibraryRepository {
           _notify();
         }
       } on Exception catch (error) {
-        if (client.auth.currentUser?.id != owner || transientReadFailure(error))
+        if (client.auth.currentUser?.id != owner ||
+            transientReadFailure(error)) {
           return;
+        }
         rethrow;
       } finally {
         _busy.remove(key);
@@ -470,7 +500,7 @@ class LibraryRepository {
     TrackingCommand command,
   ) async {
     final result = await _save(command);
-    _notify(); // Library, Feed, Discover and Profile reload on this.
+    _notify();
     return result;
   }
 
@@ -513,8 +543,9 @@ class LibraryRepository {
     final owner = _owner();
     final title = command.titleId;
     final key = (owner, title);
-    if (!_busy.add(key))
+    if (!_busy.add(key)) {
       throw const TrackingFailure('This title is already syncing.');
+    }
     try {
       final current =
           await store.read(owner, 'outbox', title) as Map<String, dynamic>?;
@@ -556,8 +587,9 @@ class LibraryRepository {
         'tracking:$title',
       ) as Map<String, dynamic>?;
       final projection = previous == null ? null : _project(previous, command);
-      if (projection == null || !store.available)
+      if (projection == null || !store.available) {
         return await _submit(owner, command);
+      }
       final item = {...command.toMap(), 'projection': projection};
       await store.write(owner, 'outbox', title, item);
       try {
@@ -569,8 +601,9 @@ class LibraryRepository {
             client.auth.currentUser?.id == owner) {
           return (state: TrackingState.fromMap(projection), canUndo: false);
         }
-        if (client.auth.currentUser?.id == owner)
+        if (client.auth.currentUser?.id == owner) {
           await store.remove(owner, 'outbox', title);
+        }
         rethrow;
       }
     } finally {
@@ -617,14 +650,16 @@ class LibraryRepository {
       case 'set_episode_watched':
         final watched = payload['watched'] == true;
         next['watched'] = (row['watched'] as int? ?? 0) + (watched ? 1 : -1);
-        if (watched && row['intent'] == null)
+        if (watched && row['intent'] == null) {
           next.addAll({
             'intent': 'watching',
             'status': 'watching',
             'wanted': false,
           });
-        if (watched && (row['next'] as Map?)?['id'] == payload['episode_id'])
+        }
+        if (watched && (row['next'] as Map?)?['id'] == payload['episode_id']) {
           next['next'] = null;
+        }
       case 'edit_movie_viewing':
       case 'edit_episode_watch_date':
       case 'undo':

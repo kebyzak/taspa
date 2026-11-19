@@ -29,7 +29,7 @@ create table private.profile_settings (
   user_id uuid primary key references api.profiles on delete cascade,
   lifecycle text not null default 'ready' check (lifecycle in ('ready', 'deleting')),
   profile_private boolean not null default false,
-  library_audience private.audience not null default 'only_me',
+  library_audience private.audience not null default 'followers',
   tracking_activity boolean not null default false,
   timezone text,
   market text check (market ~ '^[A-Z]{2}$'),
@@ -1576,18 +1576,6 @@ returns void language sql security definer set search_path = '' as $$
 $$;
 grant execute on function api.set_notification_preferences(text, boolean, boolean) to authenticated;
 
-create function api.inbox_page(before_time timestamptz default null, before_id uuid default null, item_id uuid default null)
-returns table (id uuid, kind text, actor_id uuid, target_id uuid, event_at timestamptz, read_at timestamptz)
-language sql stable security definer set search_path = '' as $$
-  select n.id, n.kind, n.actor_id, n.target_id, n.event_at, n.read_at
-  from private.notifications n
-  left join private.notification_preferences p on p.user_id = n.recipient_id and p.category = private.notification_category(n.kind)
-  where n.recipient_id = (select private.ready_user()) and coalesce(p.inbox,true) and private.notification_valid(n)
-    and (item_id is null or n.id = item_id)
-    and (before_time is null or (n.event_at,n.id) < (before_time,before_id))
-  order by n.event_at desc,n.id desc limit 20;
-$$;
-grant execute on function api.inbox_page(timestamptz, uuid, uuid) to authenticated;
 
 create function api.mark_inbox_read(item_id uuid default null, through_time timestamptz default null, through_id uuid default null)
 returns void language sql security definer set search_path = '' as $$
@@ -2860,6 +2848,7 @@ $$;
 grant execute on function api.import_status() to authenticated;
 
 -- Feed: imported viewings and show starts are hidden; a finished import is one line.
+-- A watched log or show start carries the actor's own rating of that title, when the viewer may see it.
 create or replace function api.following_feed(before_time timestamptz default null, before_id uuid default null)
 returns setof jsonb language sql stable security definer set search_path = '' as $$
   with me as (select (select private.ready_user()) as id),
@@ -2914,9 +2903,13 @@ returns setof jsonb language sql stable security definer set search_path = '' as
   )
   select l.item || jsonb_build_object('handle',p.handle)
     || coalesce(jsonb_build_object('title',t.display_title,'tmdb_id',t.tmdb_id,'media',t.kind,'poster',t.poster_path), '{}'::jsonb)
+    || coalesce(jsonb_build_object('score',own_rating.score), '{}'::jsonb)
   from logs l
   join api.profiles p on p.user_id = (l.item->>'actor_id')::uuid
   left join api.titles t on t.id = (l.item->>'title_id')::uuid
+  left join private.ratings own_rating on l.item->>'kind' in ('watched','first_show')
+    and own_rating.user_id = p.user_id and own_rating.title_id = t.id and own_rating.season_id is null
+    and own_rating.score is not null and private.can_see(own_rating.user_id, own_rating.audience)
   where (l.item->>'kind' = 'import' or t.catalog_state = 'available')
     and (before_time is null or (l.at, l.id) < (before_time, before_id))
   order by l.at desc, l.id desc
@@ -3039,3 +3032,67 @@ language sql stable security definer set search_path = '' as $$
   order by j.created_at desc limit 1;
 $$;
 
+
+-- ===== 20261119000100_feedback_fixes.sql =====
+
+-- Search: what the viewer already did with each result, as the search sheet's quick-action keys.
+create or replace function api.my_title_marks(tmdb_ids bigint[])
+returns table (kind api.media_kind, tmdb_id bigint, marks text[])
+language sql stable security definer set search_path = '' as $$
+  with me as (select (select private.ready_user()) as id)
+  select t.kind, t.tmdb_id, array_remove(array[
+      case when exists (select 1 from private.wanted_entries w
+        where w.user_id = me.id and w.title_id = t.id and w.added_at is not null) then 'want' end,
+      case when exists (select 1 from private.movie_viewings v
+        where v.user_id = me.id and v.movie_id = t.id and v.deleted_at is null) then 'watched' end,
+      case when exists (select 1 from private.tracked_shows sh
+        where sh.user_id = me.id and sh.show_id = t.id and sh.intent is not null) then 'start' end
+    ], null)
+  from me join api.titles t on t.tmdb_id = any(tmdb_ids[1:100]);
+$$;
+grant execute on function api.my_title_marks(bigint[]) to authenticated;
+
+-- Notifications say what happened, in the inbox and in the push body.
+create or replace function private.notification_text(n private.notifications) returns text
+language sql stable set search_path = '' as $$
+  select case n.kind
+    when 'follow' then '@' || a.handle || ' started following you'
+    when 'follow_request' then '@' || a.handle || ' wants to follow you'
+    when 'follow_accepted' then '@' || a.handle || ' accepted your follow request'
+    when 'like' then '@' || a.handle || ' liked your review of ' || coalesce(reviewed.display_title, 'a title')
+    when 'comment' then '@' || a.handle || ' commented on your review of ' || coalesce(reviewed.display_title, 'a title')
+    when 'episode' then 'New episode of ' || coalesce(t.display_title, 'a show you watch')
+    when 'wanted_release' then coalesce(t.display_title, 'A title from your Want list') || ' comes out '
+      || coalesce(to_char(n.release_day, 'Mon FMDD'), 'soon')
+    when 'import_done' then 'Your Must import is finished'
+    else 'Something new in Taspa'
+  end
+  from (select 1) x
+  left join api.profiles a on a.user_id = n.actor_id
+  left join private.reviews r on n.kind in ('like', 'comment') and r.discussion_id = n.target_id
+  left join api.titles reviewed on reviewed.id = r.title_id
+  left join api.titles t on n.kind in ('episode', 'wanted_release') and t.id = n.target_id;
+$$;
+
+create function api.inbox_page(before_time timestamptz default null, before_id uuid default null, item_id uuid default null)
+returns table (id uuid, kind text, actor_id uuid, target_id uuid, event_at timestamptz, read_at timestamptz, message text)
+language sql stable security definer set search_path = '' as $$
+  select n.id, n.kind, n.actor_id, n.target_id, n.event_at, n.read_at, private.notification_text(n)
+  from private.notifications n
+  left join private.notification_preferences p on p.user_id = n.recipient_id and p.category = private.notification_category(n.kind)
+  where n.recipient_id = (select private.ready_user()) and coalesce(p.inbox,true) and private.notification_valid(n)
+    and (item_id is null or n.id = item_id)
+    and (before_time is null or (n.event_at,n.id) < (before_time,before_id))
+  order by n.event_at desc,n.id desc limit 20;
+$$;
+grant execute on function api.inbox_page(timestamptz, uuid, uuid) to authenticated;
+
+-- The push worker reads the body for a claimed delivery; it stays a separate call so push_destination keeps its shape.
+create or replace function api.push_message(claim uuid) returns text
+language sql stable security definer set search_path = '' as $$
+  select private.notification_text(n) from private.push_deliveries q
+  join private.notifications n on n.id = q.notification_id and n.generation = q.generation
+  where q.lease_id = claim;
+$$;
+revoke execute on function api.push_message(uuid) from public, anon, authenticated;
+grant execute on function api.push_message(uuid) to service_role;

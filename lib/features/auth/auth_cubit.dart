@@ -66,8 +66,9 @@ class AccountCubit extends Cubit<Account> {
             .select('handle')
             .eq('user_id', id)
             .maybeSingle();
-        if (_client.auth.currentUser?.id != id)
+        if (_client.auth.currentUser?.id != id) {
           throw StateError('Account changed');
+        }
         return profile ?? <String, dynamic>{};
       }, fallback: (saved) => saved as Map<String, dynamic>);
       if (isClosed || request != _request) return;

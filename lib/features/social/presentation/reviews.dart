@@ -78,7 +78,7 @@ class _RecommendationsState extends State<_Recommendations> {
                     subtitle: Text(
                       '@${row['handle']} ${switch (row['kind']) {
                         'review' => 'wrote a review',
-                        'rating' => 'rated it ${row['score']}/10',
+                        'rating' => 'rated it ${starsText(row['score'] as int)} ★',
                         'first_show' => 'started watching',
                         _ => 'watched it',
                       }}',
@@ -231,10 +231,11 @@ class _OpinionActionsState extends State<OpinionActions> {
               ],
             ),
           );
-          if (replace == true)
+          if (replace == true) {
             revision = latest;
-          else
+          } else {
             result['draft'] = true;
+          }
         }
         await store
             .write(owner, 'drafts', key, {...result, 'base_revision': revision})
@@ -242,10 +243,11 @@ class _OpinionActionsState extends State<OpinionActions> {
               if (result['draft'] == true) throw error;
             });
         if (result['draft'] == true) {
-          if (mounted)
+          if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Draft saved on this device')),
             );
+          }
           return;
         }
         await repo.saveReview(
@@ -334,7 +336,7 @@ class _OpinionActionsState extends State<OpinionActions> {
                     label: score == null
                         ? 'Rate ${widget.label}'
                         : 'Your ${widget.label} rating',
-                    value: score == null ? null : '$score',
+                    value: score == null ? null : starsText(score),
                     caption: score == null ? 'Tap to rate' : 'Tap to edit',
                     star: true,
                     onTap: _saving || loading
@@ -524,7 +526,11 @@ class _StatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     button: onTap != null,
-    label: [label, if (value != null) '$value of 10', ?caption].join(', '),
+    label: [
+      label,
+      if (value != null) '$value of ${star ? '5 stars' : '10'}',
+      ?caption,
+    ].join(', '),
     excludeSemantics: true,
     child: Material(
       color: surfaceColor,
@@ -609,10 +615,10 @@ class _OpinionEditorState extends State<_OpinionEditor> {
   late final _text = TextEditingController(
     text: widget.current?['body'] as String?,
   );
-  late String _audience = widget.current?['audience'] as String? ?? 'only_me';
+  late String _audience = widget.current?['audience'] as String? ?? 'followers';
   late int? _score = widget.current?['score'] as int?;
   late bool _spoiler = widget.current?['spoiler'] == true;
-  bool _share = false;
+  late bool _share = widget.current == null;
 
   void _finish({bool draft = false}) => Navigator.pop(context, {
     'body': _text.text.trim(),
@@ -622,6 +628,13 @@ class _OpinionEditorState extends State<_OpinionEditor> {
     'share': _share,
     'draft': draft,
   });
+
+  /// One half-star up or down; going below half a star clears the rating.
+  VoidCallback _step(int delta) =>
+      () => setState(() {
+        final next = (_score ?? 0) + delta;
+        _score = next < 1 ? null : next.clamp(1, 10);
+      });
 
   @override
   void dispose() {
@@ -665,41 +678,63 @@ class _OpinionEditorState extends State<_OpinionEditor> {
               onChanged: (value) => setState(() => _spoiler = value),
             ),
           ] else ...[
+            // Score is 1–10 half-stars: five stars, a tap on a star's left half gives the half star.
             Semantics(
               slider: true,
               label: 'Rating',
-              value: _score == null ? 'No rating' : '$_score of 10',
-              increasedValue: '${((_score ?? 0) + 1).clamp(1, 10)} of 10',
+              value: _score == null
+                  ? 'No rating'
+                  : '${starsText(_score!)} of 5 stars',
+              increasedValue:
+                  '${starsText(((_score ?? 0) + 1).clamp(1, 10))} of 5 stars',
               decreasedValue: _score == null || _score == 1
                   ? 'No rating'
-                  : '${_score! - 1} of 10',
-              onIncrease: _score == 10
-                  ? null
-                  : () => setState(() => _score = (_score ?? 0) + 1),
-              onDecrease: _score == null
-                  ? null
-                  : () => setState(
-                      () => _score = _score! == 1 ? null : _score! - 1,
-                    ),
-              // Ten stars share the row width so they fit any phone without wrapping.
+                  : '${starsText(_score! - 1)} of 5 stars',
+              onIncrease: _score == 10 ? null : _step(1),
+              onDecrease: _score == null ? null : _step(-1),
               child: ExcludeSemantics(
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    for (var star = 1; star <= 10; star++)
-                      Expanded(
-                        child: InkResponse(
-                          onTap: () => setState(() => _score = star),
-                          radius: 20,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Icon(
-                              (_score ?? 0) >= star
-                                  ? PhosphorIconsFill.star
-                                  : PhosphorIconsRegular.star,
+                    for (var star = 1; star <= 5; star++)
+                      SizedBox(
+                        width: 52,
+                        height: 52,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            const Icon(
+                              PhosphorIconsRegular.star,
                               color: coralColor,
-                              size: 28,
+                              size: 40,
                             ),
-                          ),
+                            if ((_score ?? 0) >= star * 2 - 1)
+                              ClipRect(
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  widthFactor: (_score ?? 0) >= star * 2
+                                      ? 1
+                                      : .5,
+                                  child: const Icon(
+                                    PhosphorIconsFill.star,
+                                    color: coralColor,
+                                    size: 40,
+                                  ),
+                                ),
+                              ),
+                            Row(
+                              children: [
+                                for (final value in [star * 2 - 1, star * 2])
+                                  Expanded(
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () =>
+                                          setState(() => _score = value),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
                   ],
@@ -710,18 +745,14 @@ class _OpinionEditorState extends State<_OpinionEditor> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
-                  tooltip: 'Decrease by one',
-                  onPressed: _score == null
-                      ? null
-                      : () => setState(
-                          () => _score = _score! == 1 ? null : _score! - 1,
-                        ),
+                  tooltip: 'Half a star less',
+                  onPressed: _score == null ? null : _step(-1),
                   icon: const Icon(PhosphorIconsRegular.minus),
                 ),
                 SizedBox(
                   width: 96,
                   child: Text(
-                    _score == null ? 'No rating' : '$_score / 10',
+                    _score == null ? 'No rating' : '${starsText(_score!)} / 5',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 20,
@@ -730,10 +761,8 @@ class _OpinionEditorState extends State<_OpinionEditor> {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Increase by one',
-                  onPressed: _score == 10
-                      ? null
-                      : () => setState(() => _score = (_score ?? 0) + 1),
+                  tooltip: 'Half a star more',
+                  onPressed: _score == 10 ? null : _step(1),
                   icon: const Icon(PhosphorIconsRegular.plus),
                 ),
               ],

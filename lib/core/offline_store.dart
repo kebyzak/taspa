@@ -28,6 +28,7 @@ class OfflineStore {
   final _keys = <String, Future<Uint8List>>{};
   final _random = Random.secure();
   static const _secure = FlutterSecureStorage();
+
   bool get available =>
       !kIsWeb &&
       {
@@ -205,7 +206,6 @@ class OfflineStore {
     );
   }
 
-  /// With [maxAge] and [reuse], a saved copy younger than [maxAge] is returned without calling [fetch].
   Future<T> cached<T extends Object>(
     String owner,
     String id,

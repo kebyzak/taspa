@@ -168,7 +168,6 @@ class _TitleBodyState extends State<_TitleBody> {
                     final revert = TrackingCommand(command.titleId, 'undo', {
                       'original_operation_id': command.id,
                     });
-                    // The snackbar outlives this page; after leaving it, undo through the repository directly.
                     if (mounted) {
                       _apply(revert, undo: true);
                     } else {
@@ -582,10 +581,11 @@ class _TitleBodyState extends State<_TitleBody> {
                     text: '$backendUrl/functions/v1/share/title/$id',
                   ),
                 );
-                if (mounted)
+                if (mounted) {
                   ScaffoldMessenger.of(
                     context,
                   ).showSnackBar(const SnackBar(content: Text('Link copied')));
+                }
               },
             ),
         ],
@@ -648,12 +648,13 @@ class _TitleBodyState extends State<_TitleBody> {
                           Uri.https('www.youtube.com', '/watch', {'v': key}),
                           mode: LaunchMode.externalApplication,
                         );
-                        if (!opened && mounted)
+                        if (!opened && mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Could not open the trailer.'),
                             ),
                           );
+                        }
                       },
                     ),
                   ),

@@ -112,16 +112,16 @@ typedef CatalogEpisode = ({
 
 class CatalogFailure implements Exception {
   const CatalogFailure(this.status);
+
   final int status;
 }
 
 class CatalogRepository {
   CatalogRepository(this.client, this.store);
+
   final SupabaseClient client;
   final OfflineStore store;
 
-  // Cache-first windows per operation; they mirror the server's TTLs so the free-tier
-  // Edge Function quota is only spent when the device copy is actually old.
   static const _fresh = {
     'trending': Duration(hours: 2),
     'search': Duration(minutes: 30),
@@ -145,12 +145,12 @@ class CatalogRepository {
     );
   }
 
-  /// Personal "For you" picks from similar lists already stored server-side; no TMDB or Edge call.
   Future<List<CatalogTitle>> forYou({bool refresh = false}) async {
     final owner = client.auth.currentUser?.id;
     if (owner == null) return [];
-    if (refresh)
+    if (refresh) {
       await store.remove(owner, 'cache', 'for_you').catchError((Object _) {});
+    }
     final rows = await store.cached(
       owner,
       'for_you',
@@ -316,8 +316,9 @@ class CatalogRepository {
                       params: {'title_id': showId, 'selected_season': seasonId},
                     )
                 as Map<String, dynamic>;
-        if ((client.auth.currentUser?.id ?? '') != owner)
+        if ((client.auth.currentUser?.id ?? '') != owner) {
           throw const CatalogFailure(401);
+        }
         return response;
       },
       fallback: (saved) => saved as Map<String, dynamic>,

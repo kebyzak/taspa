@@ -102,7 +102,10 @@ async function send(accessToken: string, payload: Json): Promise<Response> {
 async function deliver(accessToken: string, item: Claim): Promise<string> {
   let outcome = "retry";
   try {
-    const destination = await rpc<string | null>("push_destination", { claim: item.lease_id });
+    const [destination, message] = await Promise.all([
+      rpc<string | null>("push_destination", { claim: item.lease_id }),
+      rpc<string | null>("push_message", { claim: item.lease_id }),
+    ]);
     if (!destination) {
       outcome = "skipped";
     } else {
@@ -114,7 +117,7 @@ async function deliver(accessToken: string, item: Claim): Promise<string> {
             ttl: "1800s",
             notification: {
               title: "Taspa",
-              body: "You have a new update.",
+              body: message ?? "You have a new update.",
               tag: item.notification_id,
             },
           },

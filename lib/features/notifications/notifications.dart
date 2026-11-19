@@ -16,6 +16,7 @@ typedef InboxItem = ({
   String target,
   String eventAt,
   bool read,
+  String? message,
 });
 typedef NoticePreference = ({bool inbox, bool push});
 
@@ -44,6 +45,7 @@ class InboxRepository {
             target: row['target_id'] as String,
             eventAt: row['event_at'] as String,
             read: row['read_at'] != null,
+            message: row['message'] as String?,
           ),
         )
         .toList();

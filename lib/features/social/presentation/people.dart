@@ -48,27 +48,31 @@ class _PeopleSearchPageState extends State<PeopleSearchPage> {
           onChanged: (text) {
             _debounce?.cancel();
             _debounce = Timer(const Duration(milliseconds: 300), () {
-              if (mounted)
+              if (mounted) {
                 setState(() {
                   _results = context.read<SocialRepository>().findPeople(text);
                 });
+              }
             });
           },
         ),
         FutureBuilder(
           future: _results,
           builder: (context, result) {
-            if (result.connectionState == ConnectionState.waiting)
+            if (result.connectionState == ConnectionState.waiting) {
               return const LinearProgressIndicator();
-            if (result.hasError)
+            }
+            if (result.hasError) {
               return const Text('Search is temporarily unavailable.');
+            }
             final rows = result.data;
             if (rows == null) return const SizedBox.shrink();
-            if (rows.isEmpty)
+            if (rows.isEmpty) {
               return const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
                 child: Text('No matching profiles.'),
               );
+            }
             return Column(children: [for (final row in rows) _PersonTile(row)]);
           },
         ),
@@ -79,6 +83,7 @@ class _PeopleSearchPageState extends State<PeopleSearchPage> {
 
 class _PersonTile extends StatelessWidget {
   const _PersonTile(this.row, {this.action});
+
   final SocialRow row;
   final Widget? action;
 
@@ -95,6 +100,7 @@ class _PersonTile extends StatelessWidget {
 
 class FollowingPage extends StatefulWidget {
   const FollowingPage({super.key});
+
   @override
   State<FollowingPage> createState() => _FollowingPageState();
 }
@@ -163,6 +169,7 @@ class _FollowingPageState extends State<FollowingPage> {
     'Nov',
     'Dec',
   ];
+
   // Own watches are part of the feed, so tracking changes refresh it.
   late final _changes = [
     context.read<LibraryRepository>().changes.listen((_) => _load()),
@@ -187,8 +194,9 @@ class _FollowingPageState extends State<FollowingPage> {
   Future<void> _load({bool append = false}) async {
     if (!mounted ||
         _working ||
-        context.read<AccountCubit>().state.phase != AccountPhase.ready)
+        context.read<AccountCubit>().state.phase != AccountPhase.ready) {
       return;
+    }
     final owner = context.read<AccountCubit>().state.userId;
     setState(() {
       _working = true;
@@ -198,8 +206,9 @@ class _FollowingPageState extends State<FollowingPage> {
       final rows = await context.read<SocialRepository>().feed(
         after: append ? _rows.lastOrNull : null,
       );
-      if (!mounted || owner != context.read<AccountCubit>().state.userId)
+      if (!mounted || owner != context.read<AccountCubit>().state.userId) {
         return;
+      }
       setState(() {
         _loaded = true;
         _rows = append ? [..._rows, ...rows] : rows;
@@ -306,6 +315,7 @@ class _FollowingPageState extends State<FollowingPage> {
 /// One Feed item: who did what and when, then the title card (or the review card).
 class _FeedEntry extends StatelessWidget {
   const _FeedEntry(this.row);
+
   final SocialRow row;
 
   static String _ago(String? value) {
@@ -433,8 +443,9 @@ class _FeedEntry extends StatelessWidget {
                           ],
                         ),
                       ),
-                      if (row['kind'] == 'rating') ...[
-                        StarScore(row['score'] as int),
+                      // Ratings and watched logs both carry the actor's score when they rated it.
+                      if (row['score'] case final int score) ...[
+                        StarScore(score),
                         const SizedBox(width: 8),
                       ],
                     ],
@@ -450,6 +461,7 @@ class _FeedEntry extends StatelessWidget {
 
 class PersonPage extends StatefulWidget {
   const PersonPage({super.key, required this.id, this.inTab = false});
+
   final String id;
   final bool inTab;
 
@@ -463,6 +475,7 @@ class _PersonPageState extends State<PersonPage> {
   int _generation = 0;
   bool _regionSent = false;
   final _lists = GlobalKey<_ProfileListsState>();
+
   // Counts and lists change when anything is logged, rated or followed anywhere in the app.
   late final _changes = [
     context.read<LibraryRepository>().changes.listen((_) => _reload()),
@@ -470,11 +483,12 @@ class _PersonPageState extends State<PersonPage> {
   ];
 
   void _reload() {
-    if (mounted)
+    if (mounted) {
       setState(() {
         _profile = _fetch();
         _generation++;
       });
+    }
   }
 
   @override
@@ -532,10 +546,11 @@ class _PersonPageState extends State<PersonPage> {
         params,
       ); // The change stream reloads this page.
     } on Exception {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not save. Try again.')),
         );
+      }
     }
   }
 
@@ -546,8 +561,9 @@ class _PersonPageState extends State<PersonPage> {
       isScrollControlled: true,
       builder: (context) => _ProfileEditor(row),
     );
-    if (update != null && mounted)
+    if (update != null && mounted) {
       await _change('profile_update', {'fields': update});
+    }
   }
 
   Future<void> _changeAvatar(bool remove) async {
@@ -563,19 +579,22 @@ class _PersonPageState extends State<PersonPage> {
           requestFullMetadata: false,
         );
         if (file == null) return;
-        if (await file.length() > 8 * 1024 * 1024)
+        if (await file.length() > 8 * 1024 * 1024) {
           throw const FormatException('Image too large');
+        }
         final codec = await ui.instantiateImageCodec(await file.readAsBytes());
         try {
           final frame = await codec.getNextFrame();
           try {
-            if (frame.image.width > 512 || frame.image.height > 512)
+            if (frame.image.width > 512 || frame.image.height > 512) {
               throw const FormatException('Image too large');
+            }
             final data = await frame.image.toByteData(
               format: ui.ImageByteFormat.png,
             );
-            if (data == null || data.lengthInBytes > 1024 * 1024)
+            if (data == null || data.lengthInBytes > 1024 * 1024) {
               throw const FormatException('Image too large');
+            }
             await repository.changeAvatar(
               data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
             );
@@ -588,10 +607,11 @@ class _PersonPageState extends State<PersonPage> {
       }
       if (mounted) setState(() => _avatarVersion++);
     } on Object {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not update your profile photo.')),
         );
+      }
     }
   }
 
@@ -680,11 +700,13 @@ class _PersonPageState extends State<PersonPage> {
             ),
           );
         }
-        if (result.connectionState != ConnectionState.done)
+        if (result.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
+        }
         final row = result.data;
-        if (row == null)
+        if (row == null) {
           return const Center(child: Text('This profile is unavailable.'));
+        }
         final own = row['own'] == true;
         final ready =
             context.watch<AccountCubit>().state.phase == AccountPhase.ready;
@@ -1026,6 +1048,7 @@ class _ProfileLists extends StatefulWidget {
     required this.reviews,
     required this.generation,
   });
+
   final String owner;
   final bool library;
   final bool reviews;
@@ -1203,7 +1226,9 @@ class _ProfileListsState extends State<_ProfileLists> {
 
 class _ProfileEditor extends StatefulWidget {
   const _ProfileEditor(this.row);
+
   final SocialRow row;
+
   @override
   State<_ProfileEditor> createState() => _ProfileEditorState();
 }
@@ -1216,6 +1241,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
   late bool _private = widget.row['private'] == true;
   late String _audience =
       widget.row['library_audience'] as String? ?? 'only_me';
+
   @override
   void dispose() {
     for (final field in [_name, _bio]) {
@@ -1287,14 +1313,17 @@ class _ProfileEditorState extends State<_ProfileEditor> {
 
 class RelationshipPage extends StatefulWidget {
   const RelationshipPage({super.key, required this.id, required this.kind});
+
   final String id;
   final String kind;
+
   @override
   State<RelationshipPage> createState() => _RelationshipPageState();
 }
 
 class PersonLibraryPage extends StatefulWidget {
   const PersonLibraryPage({super.key, required this.id});
+
   final String id;
 
   @override
@@ -1423,6 +1452,7 @@ class _PersonLibraryPageState extends State<PersonLibraryPage> {
 class _RelationshipPageState extends State<RelationshipPage> {
   List<SocialRow> _rows = [];
   bool _loading = true, _error = false, _more = false;
+
   @override
   void initState() {
     super.initState();

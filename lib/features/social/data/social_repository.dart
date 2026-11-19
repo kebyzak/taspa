@@ -33,7 +33,6 @@ class SocialRepository {
 
   final _changed = StreamController<void>.broadcast();
 
-  /// Fires after any successful write (rating, review, follow, profile) so open pages reload.
   Stream<void> get changes => _changed.stream;
   void notifyChanged() => _changed.add(null);
 
@@ -57,14 +56,13 @@ class SocialRepository {
             headers: {...avatarHeaders, 'Content-Type': 'image/png'},
             body: png,
           );
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw const FormatException('Avatar update is unavailable.');
+    }
   }
 
-  /// Latest Must import of this account, or null if there was none.
   Future<SocialRow?> importStatus() => one('import_status');
 
-  /// Starts (`username` set) or continues a Must import. Throws [ImportFailure] with the server code.
   Future<SocialRow> importMust({String? username}) async {
     final response = await http
         .post(
