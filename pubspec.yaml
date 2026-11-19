@@ -23,7 +23,8 @@ dependencies:
   pointycastle: 4.0.0
   supabase_flutter: 2.18.3
   uuid: 4.6.0
-
+  file_picker: 13.4.0
+  share_plus: 13.3.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

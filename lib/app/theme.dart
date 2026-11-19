@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'phosphor.dart';
 import '../features/catalog/presentation/artwork.dart';
@@ -59,8 +60,22 @@ ThemeData taspaTheme() {
     splashFactory: InkSparkle.splashFactory,
     visualDensity: VisualDensity.standard,
     dividerTheme: const DividerThemeData(color: hairlineColor, space: 1),
+    // Flutter's built-in back/close buttons and segment checkmarks default to Material glyphs.
+    actionIconTheme: ActionIconThemeData(
+      backButtonIconBuilder: (context) =>
+          const Icon(PhosphorIconsRegular.arrowLeft),
+      closeButtonIconBuilder: (context) => const Icon(PhosphorIconsRegular.x),
+    ),
+    segmentedButtonTheme: const SegmentedButtonThemeData(
+      selectedIcon: Icon(PhosphorIconsRegular.check),
+    ),
     appBarTheme: const AppBarTheme(
       backgroundColor: canvasColor,
+      systemOverlayStyle: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
       surfaceTintColor: Colors.transparent,
       scrolledUnderElevation: 0,
       centerTitle: false,
@@ -306,20 +321,24 @@ class PosterCard extends StatelessWidget {
     required this.poster,
     required this.title,
     this.caption,
-    this.badge,
+    this.score,
     required this.onTap,
   });
 
   final String? poster;
   final String title;
   final String? caption;
-  final String? badge;
+  final num? score;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) => Semantics(
     button: true,
-    label: [title, ?caption].join(', '),
+    label: [
+      title,
+      ?caption,
+      if (score != null) 'rated ${scoreText(score!)} of 10',
+    ].join(', '),
     excludeSemantics: true,
     child: InkWell(
       onTap: onTap,
@@ -333,38 +352,11 @@ class PosterCard extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 Artwork(poster),
-                if (badge case final text?)
+                if (score case final score?)
                   Positioned(
-                    left: 6,
-                    top: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: canvasColor.withValues(alpha: .85),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            PhosphorIconsFill.star,
-                            size: 14,
-                            color: coralColor,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            text,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    right: 0,
+                    top: 0,
+                    child: ScoreBadge(score, corner: true),
                   ),
               ],
             ),
@@ -512,18 +504,59 @@ class Avatar extends StatelessWidget {
   );
 }
 
-String starsText(int score) =>
-    score.isEven ? '${score ~/ 2}' : (score / 2).toStringAsFixed(1);
+/// Scores are 0.5–10 in half-point steps: "7.5", "8".
+String scoreText(num score) =>
+    score % 1 == 0 ? '${score.toInt()}' : score.toStringAsFixed(1);
+
+/// The owner's own score as a star-and-number tag. On a poster ([corner]) it sits flush in the
+/// top-right corner, matching the poster's 8px rounding; elsewhere it is a plain rounded pill.
+class ScoreBadge extends StatelessWidget {
+  const ScoreBadge(this.score, {super.key, this.corner = false});
+  final num score;
+  final bool corner;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 22,
+    padding: const EdgeInsets.symmetric(horizontal: 6),
+    // Translucent coral picks up the poster underneath, so the score reads softer than a solid fill.
+    decoration: BoxDecoration(
+      color: coralColor.withValues(alpha: .75),
+      borderRadius: corner
+          ? const BorderRadius.only(
+              topRight: Radius.circular(8),
+              bottomLeft: Radius.circular(8),
+            )
+          : BorderRadius.circular(6),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(PhosphorIconsFill.star, size: 12, color: onCoralColor),
+        const SizedBox(width: 2),
+        Text(
+          scoreText(score),
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: onCoralColor,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
 class StarScore extends StatelessWidget {
   const StarScore(this.score, {super.key, this.large = false});
 
-  final int score;
+  final num score;
   final bool large;
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: '${starsText(score)} of 5 stars',
+    label: '${scoreText(score)} of 10',
     excludeSemantics: true,
     child: Row(
       mainAxisSize: MainAxisSize.min,
@@ -531,7 +564,7 @@ class StarScore extends StatelessWidget {
         Icon(PhosphorIconsFill.star, size: large ? 22 : 18, color: coralColor),
         const SizedBox(width: 2),
         Text(
-          starsText(score),
+          scoreText(score),
           style: TextStyle(
             fontSize: large ? 18 : 15,
             fontWeight: FontWeight.w600,

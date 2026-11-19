@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../../../app/phosphor.dart';
 import '../../../app/theme.dart';
@@ -347,6 +349,7 @@ class _FeedEntry extends StatelessWidget {
       _ when row['review'] != null => 'reviewed',
       'rating' => 'rated',
       'first_show' => 'started watching',
+      'wanted' => 'wants to watch',
       'import' => 'imported ${row['count']} titles from ${row['source']}',
       'episode' when episodes.length > 1 =>
         'watched ${episodes.length} episodes',
@@ -444,7 +447,7 @@ class _FeedEntry extends StatelessWidget {
                         ),
                       ),
                       // Ratings and watched logs both carry the actor's score when they rated it.
-                      if (row['score'] case final int score) ...[
+                      if (row['score'] case final num score) ...[
                         StarScore(score),
                         const SizedBox(width: 8),
                       ],
@@ -660,6 +663,7 @@ class _PersonPageState extends State<PersonPage> {
                 'Import from Must',
                 '/import-must',
               ),
+              (PhosphorIconsRegular.export, 'Export library', 'export'),
               (
                 PhosphorIconsRegular.bell,
                 'Notification settings',
@@ -680,8 +684,34 @@ class _PersonPageState extends State<PersonPage> {
     if (route == null || !mounted) return;
     if (route == 'photo') {
       await _photoSheet();
+    } else if (route == 'export') {
+      await _export();
     } else {
       await context.push(route);
+    }
+  }
+
+  /// Everything the owner logged as JSON, saved where they pick in the system save dialog (Downloads by default).
+  Future<void> _export() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final library = await context.read<SocialRepository>().one(
+        'export_library',
+      );
+      final saved = await FilePicker.saveFile(
+        fileName: 'taspa-library.json',
+        bytes: utf8.encode(const JsonEncoder.withIndent('  ').convert(library)),
+        mimeType: 'application/json',
+      );
+      if (saved != null) {
+        messenger.showSnackBar(const SnackBar(content: Text('Library saved.')));
+      }
+    } on Exception {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Could not export your library. Try again.'),
+        ),
+      );
     }
   }
 
@@ -916,6 +946,7 @@ class _PersonPageState extends State<PersonPage> {
                           )
                         : PopupMenuButton<String>(
                             tooltip: 'More actions',
+                            icon: const Icon(PhosphorIconsRegular.dotsThree),
                             onSelected: (choice) => choice == 'report'
                                 ? reportSocial(context, widget.id, 'profile')
                                 : _change('set_block', {
@@ -1060,6 +1091,8 @@ class _ProfileLists extends StatefulWidget {
 
 class _ProfileListsState extends State<_ProfileLists> {
   late String _section = widget.library ? 'wanted' : 'reviews';
+  String _sort = 'activity';
+  bool _ascending = false;
   List<SocialRow> _rows = [];
   bool _working = false, _failed = false, _end = false;
   int _request = 0;
@@ -1078,7 +1111,10 @@ class _ProfileListsState extends State<_ProfileLists> {
 
   void select(String section) {
     if (section == _section) return;
-    setState(() => _section = section);
+    setState(() {
+      _section = section;
+      _sort = _LibrarySortBar.fit(_sort, section);
+    });
     _load();
   }
 
@@ -1105,7 +1141,9 @@ class _ProfileListsState extends State<_ProfileLists> {
           : await repo.many('profile_library', {
               'owner_id': widget.owner,
               'section': section,
-              'before_time': ?last?['activity_at'],
+              'sort': _sort,
+              'ascending': _ascending,
+              'before_value': ?last?['sort_value'],
               'before_title': ?last?['title']?['id'],
             });
       if (!mounted || request != _request) return;
@@ -1151,7 +1189,27 @@ class _ProfileListsState extends State<_ProfileLists> {
             ),
           ),
         ),
-        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        if (reviews)
+          const SliverToBoxAdapter(child: SizedBox(height: 16))
+        else
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+              child: _LibrarySortBar(
+                owner: widget.owner,
+                section: _section,
+                sort: _sort,
+                ascending: _ascending,
+                onChanged: (sort, ascending) {
+                  setState(() {
+                    _sort = sort;
+                    _ascending = ascending;
+                  });
+                  _load();
+                },
+              ),
+            ),
+          ),
         if (reviews)
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1182,6 +1240,7 @@ class _ProfileListsState extends State<_ProfileLists> {
                   caption: progress == null
                       ? title.caption
                       : '${progress['watched']}/${progress['released']} episodes',
+                  score: content['score'] as num?,
                   onTap: () => context.push(title.location),
                 );
               },
@@ -1217,6 +1276,79 @@ class _ProfileListsState extends State<_ProfileLists> {
                     style: const TextStyle(color: mutedColor),
                   )
                 : const SizedBox.shrink(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Sort menu plus direction toggle for a profile library section.
+class _LibrarySortBar extends StatelessWidget {
+  const _LibrarySortBar({
+    required this.owner,
+    required this.section,
+    required this.sort,
+    required this.ascending,
+    required this.onChanged,
+  });
+
+  final String owner, section, sort;
+  final bool ascending;
+  final void Function(String sort, bool ascending) onChanged;
+
+  /// Episode count only exists for shows; other sections fall back to activity.
+  static String fit(String sort, String section) =>
+      sort == 'episodes' && section != 'watched_shows' ? 'activity' : sort;
+
+  @override
+  Widget build(BuildContext context) {
+    final sorts = [
+      ('activity', section == 'wanted' ? 'Date added' : 'Recent activity'),
+      (
+        'rating',
+        context.read<AccountCubit>().state.userId == owner
+            ? 'My rating'
+            : 'Their rating',
+      ),
+      ('imdb', 'IMDb rating'),
+      ('release', 'Release year'),
+      if (section == 'watched_shows') ('episodes', 'Number of episodes'),
+    ];
+    return Row(
+      children: [
+        PopupMenuButton<String>(
+          tooltip: 'Sort by',
+          initialValue: sort,
+          // Activity reads newest first; the others read best/highest first.
+          onSelected: (value) => onChanged(value, false),
+          itemBuilder: (context) => [
+            for (final (value, text) in sorts)
+              PopupMenuItem(value: value, child: Text(text)),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  sorts.firstWhere((item) => item.$1 == sort).$2,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 4),
+                const Icon(PhosphorIconsRegular.caretDown, size: 16),
+              ],
+            ),
+          ),
+        ),
+        const Spacer(),
+        IconButton(
+          tooltip: ascending ? 'Ascending' : 'Descending',
+          onPressed: () => onChanged(sort, !ascending),
+          icon: Icon(
+            ascending
+                ? PhosphorIconsRegular.sortAscending
+                : PhosphorIconsRegular.sortDescending,
           ),
         ),
       ],
@@ -1289,6 +1421,7 @@ class _ProfileEditorState extends State<_ProfileEditor> {
         DropdownButtonFormField<String>(
           initialValue: _audience,
           decoration: const InputDecoration(labelText: 'Library audience'),
+          icon: const Icon(PhosphorIconsRegular.caretDown, size: 18),
           items: [
             for (final entry in audienceLabels.entries)
               if (!_private || entry.key != 'public')
@@ -1332,6 +1465,8 @@ class PersonLibraryPage extends StatefulWidget {
 
 class _PersonLibraryPageState extends State<PersonLibraryPage> {
   String _section = 'watched_movies';
+  String _sort = 'activity';
+  bool _ascending = false;
   List<SocialRow> _rows = [];
   bool _working = true, _failed = false, _more = false;
   int _request = 0;
@@ -1356,7 +1491,9 @@ class _PersonLibraryPageState extends State<PersonLibraryPage> {
         {
           'owner_id': widget.id,
           'section': _section,
-          'before_time': ?last?['activity_at'],
+          'sort': _sort,
+          'ascending': _ascending,
+          'before_value': ?last?['sort_value'],
           'before_title': ?last?['title']?['id'],
         },
       );
@@ -1380,6 +1517,10 @@ class _PersonLibraryPageState extends State<PersonLibraryPage> {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: SizedBox(width: 48, height: 72, child: Artwork(title.poster)),
+      trailing: switch (content['score']) {
+        final num score => ScoreBadge(score),
+        _ => null,
+      },
       title: Text(title.name),
       subtitle: Text(
         [
@@ -1420,10 +1561,23 @@ class _PersonLibraryPageState extends State<PersonLibraryPage> {
           selected: {_section},
           onSelectionChanged: (value) {
             _section = value.first;
+            _sort = _LibrarySortBar.fit(_sort, _section);
             _load();
           },
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
+        _LibrarySortBar(
+          owner: widget.id,
+          section: _section,
+          sort: _sort,
+          ascending: _ascending,
+          onChanged: (sort, ascending) {
+            _sort = sort;
+            _ascending = ascending;
+            _load();
+          },
+        ),
+        const SizedBox(height: 4),
         if (_working) const LinearProgressIndicator(),
         if (_failed)
           InlineNotice(
@@ -1534,6 +1688,7 @@ class _RelationshipPageState extends State<RelationshipPage> {
               action: switch (widget.kind) {
                 'requests' => PopupMenuButton<String>(
                   tooltip: 'Request actions',
+                  icon: const Icon(PhosphorIconsRegular.dotsThree),
                   onSelected: (choice) => _action(row, choice),
                   itemBuilder: (context) => const [
                     PopupMenuItem(value: 'approve', child: Text('Approve')),

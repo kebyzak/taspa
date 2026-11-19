@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app/app.dart';
@@ -7,6 +8,8 @@ import 'core/backend_config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Draw under the status bar so backdrops reach the top edge instead of stopping at a dark strip.
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   try {
     await initializeBackend();
   } on Exception {

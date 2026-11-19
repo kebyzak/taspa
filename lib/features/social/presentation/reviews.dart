@@ -78,7 +78,7 @@ class _RecommendationsState extends State<_Recommendations> {
                     subtitle: Text(
                       '@${row['handle']} ${switch (row['kind']) {
                         'review' => 'wrote a review',
-                        'rating' => 'rated it ${starsText(row['score'] as int)} ★',
+                        'rating' => 'rated it ${scoreText(row['score'] as num)}/10',
                         'first_show' => 'started watching',
                         _ => 'watched it',
                       }}',
@@ -263,7 +263,7 @@ class _OpinionActionsState extends State<OpinionActions> {
         await repo.rate(
           widget.title,
           widget.season,
-          result['score'] as int?,
+          result['score'] as num?,
           result['audience'] as String,
           revision,
           result['share'] as bool,
@@ -320,7 +320,7 @@ class _OpinionActionsState extends State<OpinionActions> {
             final data = result.data;
             final rating = data?['my_rating'] as SocialRow?;
             final review = data?['my_review'] as SocialRow?;
-            final score = rating?['score'] as int?;
+            final score = rating?['score'] as num?;
             void open({required bool asReview}) => ready
                 ? _edit(asReview ? review : rating, review: asReview)
                 : context.push('/account');
@@ -336,7 +336,7 @@ class _OpinionActionsState extends State<OpinionActions> {
                     label: score == null
                         ? 'Rate ${widget.label}'
                         : 'Your ${widget.label} rating',
-                    value: score == null ? null : starsText(score),
+                    value: score == null ? null : scoreText(score),
                     caption: score == null ? 'Tap to rate' : 'Tap to edit',
                     star: true,
                     onTap: _saving || loading
@@ -526,11 +526,7 @@ class _StatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     button: onTap != null,
-    label: [
-      label,
-      if (value != null) '$value of ${star ? '5 stars' : '10'}',
-      ?caption,
-    ].join(', '),
+    label: [label, if (value != null) '$value of 10', ?caption].join(', '),
     excludeSemantics: true,
     child: Material(
       color: surfaceColor,
@@ -616,7 +612,7 @@ class _OpinionEditorState extends State<_OpinionEditor> {
     text: widget.current?['body'] as String?,
   );
   late String _audience = widget.current?['audience'] as String? ?? 'followers';
-  late int? _score = widget.current?['score'] as int?;
+  late num? _score = widget.current?['score'] as num?;
   late bool _spoiler = widget.current?['spoiler'] == true;
   late bool _share = widget.current == null;
 
@@ -629,11 +625,11 @@ class _OpinionEditorState extends State<_OpinionEditor> {
     'draft': draft,
   });
 
-  /// One half-star up or down; going below half a star clears the rating.
-  VoidCallback _step(int delta) =>
+  /// Half a point up or down; going below 0.5 clears the rating.
+  VoidCallback _step(num delta) =>
       () => setState(() {
         final next = (_score ?? 0) + delta;
-        _score = next < 1 ? null : next.clamp(1, 10);
+        _score = next < .5 ? null : next.clamp(.5, 10);
       });
 
   @override
@@ -678,50 +674,60 @@ class _OpinionEditorState extends State<_OpinionEditor> {
               onChanged: (value) => setState(() => _spoiler = value),
             ),
           ] else ...[
-            // Score is 1–10 half-stars: five stars, a tap on a star's left half gives the half star.
+            // Score is 0.5–10 in half-point steps on five stars: each star is two points,
+            // its left half sets the odd point, its right half the even one.
             Semantics(
               slider: true,
               label: 'Rating',
               value: _score == null
                   ? 'No rating'
-                  : '${starsText(_score!)} of 5 stars',
+                  : '${scoreText(_score!)} of 10',
               increasedValue:
-                  '${starsText(((_score ?? 0) + 1).clamp(1, 10))} of 5 stars',
-              decreasedValue: _score == null || _score == 1
+                  '${scoreText(((_score ?? 0) + .5).clamp(.5, 10))} of 10',
+              decreasedValue: _score == null || _score! <= .5
                   ? 'No rating'
-                  : '${starsText(_score! - 1)} of 5 stars',
-              onIncrease: _score == 10 ? null : _step(1),
-              onDecrease: _score == null ? null : _step(-1),
+                  : '${scoreText(_score! - .5)} of 10',
+              onIncrease: _score == 10 ? null : _step(.5),
+              onDecrease: _score == null ? null : _step(-.5),
               child: ExcludeSemantics(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     for (var star = 1; star <= 5; star++)
                       SizedBox(
-                        width: 52,
-                        height: 52,
+                        width: 56,
+                        height: 56,
                         child: Stack(
-                          alignment: Alignment.center,
                           children: [
-                            const Icon(
-                              PhosphorIconsRegular.star,
-                              color: coralColor,
-                              size: 40,
-                            ),
-                            if ((_score ?? 0) >= star * 2 - 1)
-                              ClipRect(
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  widthFactor: (_score ?? 0) >= star * 2
-                                      ? 1
-                                      : .5,
-                                  child: const Icon(
-                                    PhosphorIconsFill.star,
-                                    color: coralColor,
-                                    size: 40,
-                                  ),
+                            Center(
+                              child: SizedBox.square(
+                                dimension: 40,
+                                child: Stack(
+                                  children: [
+                                    const Icon(
+                                      PhosphorIconsRegular.star,
+                                      color: coralColor,
+                                      size: 40,
+                                    ),
+                                    ClipRect(
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        widthFactor:
+                                            (((_score ?? 0) - (star - 1) * 2) /
+                                                    2)
+                                                .clamp(0, 1)
+                                                .toDouble(),
+                                        child: const Icon(
+                                          PhosphorIconsFill.star,
+                                          color: coralColor,
+                                          size: 40,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
+                            ),
                             Row(
                               children: [
                                 for (final value in [star * 2 - 1, star * 2])
@@ -745,14 +751,14 @@ class _OpinionEditorState extends State<_OpinionEditor> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
-                  tooltip: 'Half a star less',
-                  onPressed: _score == null ? null : _step(-1),
+                  tooltip: 'Half a point less',
+                  onPressed: _score == null ? null : _step(-.5),
                   icon: const Icon(PhosphorIconsRegular.minus),
                 ),
                 SizedBox(
-                  width: 96,
+                  width: 112,
                   child: Text(
-                    _score == null ? 'No rating' : '${starsText(_score!)} / 5',
+                    _score == null ? 'No rating' : '${scoreText(_score!)} / 10',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 20,
@@ -761,8 +767,8 @@ class _OpinionEditorState extends State<_OpinionEditor> {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Half a star more',
-                  onPressed: _score == 10 ? null : _step(1),
+                  tooltip: 'Half a point more',
+                  onPressed: _score == 10 ? null : _step(.5),
                   icon: const Icon(PhosphorIconsRegular.plus),
                 ),
               ],
@@ -855,7 +861,7 @@ class ReviewTile extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
-                    if (row['score'] case final int score) StarScore(score),
+                    if (row['score'] case final num score) StarScore(score),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1085,6 +1091,7 @@ class _ReviewDetailPageState extends State<ReviewDetailPage> {
           if (data != null && ready)
             PopupMenuButton<String>(
               tooltip: 'More actions',
+              icon: const Icon(PhosphorIconsRegular.dotsThree),
               onSelected: (_) => reportSocial(context, widget.id, 'review'),
               itemBuilder: (context) => const [
                 PopupMenuItem(value: 'report', child: Text('Report')),
@@ -1135,7 +1142,7 @@ class _ReviewDetailPageState extends State<ReviewDetailPage> {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
-                    if (data['score'] case final int score)
+                    if (data['score'] case final num score)
                       StarScore(score, large: true),
                   ],
                 ),

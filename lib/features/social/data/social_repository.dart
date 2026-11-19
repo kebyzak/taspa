@@ -122,7 +122,7 @@ class SocialRepository {
   Future<void> rate(
     String title,
     String? season,
-    int? score,
+    num? score,
     String audience,
     int revision,
     bool share,

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -9,7 +8,6 @@ import 'package:uuid/uuid.dart';
 
 import '../../../app/phosphor.dart';
 import '../../../app/theme.dart';
-import '../../../core/backend_config.dart';
 import '../../auth/auth_cubit.dart';
 import '../../library/data/library_repository.dart';
 import '../../library/presentation/tracking_cubit.dart';
@@ -17,6 +15,7 @@ import '../../social/presentation/reviews.dart';
 import '../data/catalog_repository.dart';
 import 'artwork.dart';
 import 'discover_page.dart';
+import 'share_card.dart';
 import 'show_seasons.dart';
 
 class TitleDetailPage extends StatefulWidget {
@@ -197,6 +196,10 @@ class _TitleBodyState extends State<_TitleBody> {
     final now = DateTime.now();
     final selected = await showDatePicker(
       context: context,
+      switchToInputEntryModeIcon: const Icon(PhosphorIconsRegular.pencilSimple),
+      switchToCalendarEntryModeIcon: const Icon(
+        PhosphorIconsRegular.calendarBlank,
+      ),
       firstDate: DateTime(1870),
       lastDate: now,
       initialDate: entry?.day == null ? now : DateTime.parse(entry!.day!),
@@ -427,6 +430,7 @@ class _TitleBodyState extends State<_TitleBody> {
                 ),
                 PopupMenuButton<String>(
                   tooltip: 'Change show status',
+                  icon: const Icon(PhosphorIconsRegular.dotsThree),
                   enabled: !_pending,
                   onSelected: (value) => _setIntent(id, state, value),
                   itemBuilder: (context) => const [
@@ -571,22 +575,11 @@ class _TitleBodyState extends State<_TitleBody> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         actions: [
-          if (title.id case final id?)
+          if (title.id != null)
             IconButton(
-              tooltip: 'Copy title link',
+              tooltip: 'Share',
               icon: const Icon(PhosphorIconsRegular.export),
-              onPressed: () async {
-                await Clipboard.setData(
-                  ClipboardData(
-                    text: '$backendUrl/functions/v1/share/title/$id',
-                  ),
-                );
-                if (mounted) {
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(const SnackBar(content: Text('Link copied')));
-                }
-              },
+              onPressed: () => shareTitle(context, title),
             ),
         ],
       ),
@@ -900,6 +893,7 @@ class _ViewingHistoryState extends State<_ViewingHistory> {
               title: Text(entry.day ?? 'Date unknown'),
               trailing: PopupMenuButton<String>(
                 tooltip: 'Viewing actions',
+                icon: const Icon(PhosphorIconsRegular.dotsThree),
                 onSelected: (action) =>
                     Navigator.pop(context, (entry: entry, action: action)),
                 itemBuilder: (context) => const [

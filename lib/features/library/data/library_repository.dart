@@ -102,7 +102,7 @@ typedef LibraryEntry = ({
   TrackingState? progress,
   String? sortText,
   num? sortValue,
-  int? rating,
+  num? rating,
   String? watchedOn,
 });
 
@@ -445,7 +445,7 @@ class LibraryRepository {
       activityAt: row['activity_at'] as String,
       sortText: row['sort_text'] as String?,
       sortValue: row['sort_value'] as num?,
-      rating: row['title']['personal_rating'] as int?,
+      rating: row['title']['personal_rating'] as num?,
       watchedOn: row['title']['last_watched_on'] as String?,
       progress: switch (row['title']['progress']) {
         final Map<String, dynamic> data => TrackingState.fromMap(data),

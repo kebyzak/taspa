@@ -1176,7 +1176,8 @@ create table private.ratings (
   user_id uuid not null references api.profiles on delete cascade,
   title_id uuid not null references api.titles,
   season_id uuid,
-  score smallint check (score between 1 and 10),
+  -- 0.5–10 in half-point steps (7.5); drawn as five stars, two points each.
+  score numeric(3,1) check (score between 0.5 and 10 and score * 2 = trunc(score * 2)),
   audience private.audience not null,
   revision bigint not null check (revision > 0),
   unique nulls not distinct (user_id, title_id, season_id),
@@ -1717,7 +1718,7 @@ language sql stable security definer set search_path = '' as $$
 $$;
 grant execute on function api.title_opinions(uuid, uuid) to anon, authenticated;
 
-create function api.set_rating(title uuid, season uuid, score_value smallint, audience_value text,
+create function api.set_rating(title uuid, season uuid, score_value numeric, audience_value text,
   observed_revision bigint, share boolean default false) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare actor uuid := private.ready_user(); current_rating private.ratings; effective private.audience;
@@ -1742,7 +1743,7 @@ begin
   return api.title_opinions(title, season);
 end;
 $$;
-grant execute on function api.set_rating(uuid, uuid, smallint, text, bigint, boolean) to authenticated;
+grant execute on function api.set_rating(uuid, uuid, numeric, text, bigint, boolean) to authenticated;
 
 create function api.save_review(title uuid, season uuid, content text, has_spoiler boolean,
   audience_value text, observed_revision bigint, discussion uuid default null)
@@ -1938,8 +1939,9 @@ grant execute on function api.following_feed(timestamptz, uuid) to authenticated
 
 -- ===== 20261118001100_public_library_and_activity.sql =====
 
-create function api.profile_library(owner_id uuid, section text, before_time timestamptz default null,
-  before_title uuid default null) returns table (title jsonb, activity_at timestamptz)
+create function api.profile_library(owner_id uuid, section text, sort text default 'activity',
+  ascending boolean default false, before_value numeric default null, before_title uuid default null)
+returns table (title jsonb, activity_at timestamptz, sort_value numeric)
 language sql stable security definer set search_path = '' as $$
   with owner_allowed as materialized (
     select s.user_id from private.profile_settings s
@@ -1953,18 +1955,37 @@ language sql stable security definer set search_path = '' as $$
     union all
     select s.show_id, s.last_activity_at from private.tracked_shows s
     join owner_allowed a on a.user_id = s.user_id where section = 'watched_shows' and s.intent is not null
-  ), page as (
-    select t,e.id,e.at from entries e join api.titles t on t.id = e.id and t.catalog_state = 'available'
-    where before_time is null or (e.at,e.id) < (before_time,before_title)
-    order by e.at desc,e.id desc limit 20
+  ), data as (
+    select t, e.id, e.at,
+      -- Only a score the viewer may see; a hidden one must not leak through the order.
+      (select r.score from private.ratings r
+        where r.user_id = owner_id and r.title_id = e.id and r.season_id is null and r.score is not null
+          and private.can_see(r.user_id, r.audience)) as score,
+      case sort
+        when 'activity' then extract(epoch from e.at)::numeric
+        when 'imdb' then (select (m.details->'rating'->>'value')::numeric from private.title_metadata m where m.title_id = e.id)
+        when 'release' then extract(epoch from t.first_release_day)::numeric
+        when 'episodes' then (select sum(s.expected_episodes) from api.seasons s
+          where s.show_id = e.id and s.available and s.season_number > 0)
+      end as raw
+    from entries e join api.titles t on t.id = e.id and t.catalog_state = 'available'
+    where sort in ('activity','rating','imdb','release','episodes')
+  ), keyed as (
+    -- One ascending key for either direction; titles without a value always go last.
+    select *, coalesce(case when ascending then 1 else -1 end * case when sort = 'rating' then score else raw end, 1e15) as value_key
+    from data
   )
-  select to_jsonb(p.t) - 'overview' - 'backdrop_path' ||
-    case when (p.t).kind = 'show' and section = 'watched_shows' then jsonb_build_object('progress',
-      private.show_snapshot(owner_id,p.id) - 'next' - 'show_revision' - 'wanted_revision' - 'wanted' - 'viewing_count')
-      else '{}'::jsonb end,
-    p.at from page p order by p.at desc,p.id desc;
+  select to_jsonb(k.t) - 'overview' - 'backdrop_path' ||
+    case when (k.t).kind = 'show' and section = 'watched_shows' then jsonb_build_object('progress',
+      private.show_snapshot(owner_id,k.id) - 'next' - 'show_revision' - 'wanted_revision' - 'wanted' - 'viewing_count')
+      else '{}'::jsonb end
+    || case when k.score is not null then jsonb_build_object('score', k.score) else '{}'::jsonb end,
+    k.at, k.value_key
+  from keyed k
+  where before_title is null or (k.value_key, k.id) > (before_value, before_title)
+  order by k.value_key, k.id limit 20;
 $$;
-grant execute on function api.profile_library(uuid,text,timestamptz,uuid) to anon, authenticated;
+grant execute on function api.profile_library(uuid,text,text,boolean,numeric,uuid) to anon, authenticated;
 
 alter function api.apply_tracking(uuid,timestamptz,uuid,text,jsonb) rename to apply_library_tracking;
 revoke execute on function api.apply_library_tracking(uuid,timestamptz,uuid,text,jsonb) from authenticated;
@@ -2661,6 +2682,8 @@ $$;
 
 alter table private.movie_viewings add column if not exists imported boolean not null default false;
 alter table private.tracked_shows add column if not exists imported boolean not null default false;
+-- Set by the Must import to the added_at it wrote; while they match, the entry is an import and stays out of the Feed.
+alter table private.wanted_entries add column if not exists imported_at timestamptz;
 
 create table if not exists private.import_jobs (
   id uuid primary key default gen_random_uuid(),
@@ -2788,11 +2811,12 @@ begin
     -- The stamp trigger set marked_at = now() on these inserts; clear it so the Feed does not list them one by one.
     update private.episode_marks set marked_at = null where user_id = actor and show_id = t.id and marked_at = now();
   elsif lists ? 'want' then
-    insert into private.wanted_entries (user_id, title_id, added_at, revision)
-    select actor, t.id, at, 1
+    insert into private.wanted_entries (user_id, title_id, added_at, revision, imported_at)
+    select actor, t.id, at, 1, at
     where not exists (select 1 from private.movie_viewings v where v.user_id = actor and v.movie_id = t.id and v.deleted_at is null)
       and not exists (select 1 from private.tracked_shows sh where sh.user_id = actor and sh.show_id = t.id and sh.intent is not null)
-    on conflict (user_id, title_id) do update set added_at = excluded.added_at, revision = wanted_entries.revision + 1
+    on conflict (user_id, title_id) do update set added_at = excluded.added_at, imported_at = excluded.imported_at,
+      revision = wanted_entries.revision + 1
     where wanted_entries.added_at is null;
   end if;
 
@@ -2879,6 +2903,12 @@ returns setof jsonb language sql stable security definer set search_path = '' as
         'kind','first_show','actor_id',sh.user_id,'own',pe.own,'title_id',sh.show_id),
       sh.tracking_started_at, md5(sh.user_id::text || sh.show_id::text)::uuid
     from people pe join private.tracked_shows sh on sh.user_id = pe.user_id and sh.intent is not null and not sh.imported
+    union all
+    select jsonb_build_object('id',md5('want' || w.user_id::text || w.title_id::text)::uuid,'created_at',w.added_at,
+        'kind','wanted','actor_id',w.user_id,'own',pe.own,'title_id',w.title_id),
+      w.added_at, md5('want' || w.user_id::text || w.title_id::text)::uuid
+    from people pe join private.wanted_entries w on w.user_id = pe.user_id and w.added_at is not null
+      and w.added_at is distinct from w.imported_at
     union all
     select jsonb_build_object('id',j.id,'created_at',j.finished_at,'kind','import','actor_id',j.user_id,'own',pe.own,
         'count',j.imported,'source','Must'),
@@ -3096,3 +3126,41 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke execute on function api.push_message(uuid) from public, anon, authenticated;
 grant execute on function api.push_message(uuid) to service_role;
+
+-- Everything the owner logged, as one JSON document they can download. Titles are keyed by TMDB id so any app can match them.
+create or replace function api.export_library()
+returns jsonb language sql stable security definer set search_path = '' as $$
+  with me as (select private.ready_user() as id),
+  touched as (
+    select w.title_id from private.wanted_entries w, me where w.user_id = me.id and w.added_at is not null
+    union select v.movie_id from private.movie_viewings v, me where v.user_id = me.id and v.deleted_at is null
+    union select s.show_id from private.tracked_shows s, me where s.user_id = me.id
+    union select r.title_id from private.ratings r, me where r.user_id = me.id and r.score is not null
+    union select r.title_id from private.reviews r, me where r.user_id = me.id and r.body is not null
+  )
+  select jsonb_build_object('format', 'taspa-library', 'version', 1, 'exported_at', now(),
+    'titles', coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+      'kind', t.kind, 'tmdb_id', t.tmdb_id, 'title', t.display_title,
+      'original_title', t.original_title, 'release_date', t.first_release_day,
+      'want_added_at', (select w.added_at from private.wanted_entries w
+        where w.user_id = me.id and w.title_id = t.id and w.added_at is not null),
+      'viewings', (select jsonb_agg(jsonb_build_object('watched_on', v.watched_on, 'logged_at', v.logged_at) order by v.logged_at)
+        from private.movie_viewings v where v.user_id = me.id and v.movie_id = t.id and v.deleted_at is null),
+      'status', (select s.intent from private.tracked_shows s where s.user_id = me.id and s.show_id = t.id),
+      'started_at', (select s.tracking_started_at from private.tracked_shows s where s.user_id = me.id and s.show_id = t.id),
+      'episodes', (select jsonb_agg(jsonb_build_object('season', se.season_number, 'episode', e.episode_number, 'watched_on', m.watched_on)
+          order by se.season_number, e.episode_number)
+        from private.episode_marks m join api.episodes e on e.id = m.episode_id join api.seasons se on se.id = e.season_id
+        where m.user_id = me.id and m.show_id = t.id and m.watched),
+      'ratings', (select jsonb_agg(jsonb_build_object('season', se.season_number, 'score', r.score) order by se.season_number nulls first)
+        from private.ratings r left join api.seasons se on se.id = r.season_id
+        where r.user_id = me.id and r.title_id = t.id and r.score is not null),
+      'reviews', (select jsonb_agg(jsonb_build_object('season', se.season_number, 'body', r.body, 'spoiler', r.spoiler,
+          'published_at', r.published_at) order by se.season_number nulls first)
+        from private.reviews r left join api.seasons se on se.id = r.season_id
+        where r.user_id = me.id and r.title_id = t.id and r.body is not null)
+    )) order by t.kind, t.display_title), '[]'::jsonb))
+  from me, touched x join api.titles t on t.id = x.title_id
+$$;
+revoke execute on function api.export_library() from public, anon;
+grant execute on function api.export_library() to authenticated;

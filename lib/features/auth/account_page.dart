@@ -43,6 +43,32 @@ class _AccountPageState extends State<AccountPage> {
     final account = context.read<AccountCubit>();
     final auth = Supabase.instance.client.auth;
     final email = _email.text.trim();
+    final phase = account.state.phase;
+    final guest = phase == AccountPhase.guest;
+    // Catch empty fields here so the user gets a plain hint instead of a server error.
+    final missing = switch (phase) {
+      AccountPhase.needsHandle when _handle.text.trim().isEmpty =>
+        'Enter a handle.',
+      AccountPhase.recovery when _password.text.isEmpty =>
+        'Enter a new password.',
+      _ when guest && email.isEmpty => 'Enter your email.',
+      _ when guest && !email.contains('@') => 'Enter a valid email.',
+      _
+          when guest &&
+              (_form == _Form.signIn || _form == _Form.signUp) &&
+              _password.text.isEmpty =>
+        'Enter your password.',
+      _
+          when guest &&
+              (_form == _Form.verify || _form == _Form.recoveryCode) &&
+              _code.text.trim().isEmpty =>
+        'Enter the code from your email.',
+      _ => null,
+    };
+    if (missing != null) {
+      setState(() => _message = missing);
+      return;
+    }
     setState(() {
       _saving = true;
       _message = null;
@@ -98,10 +124,21 @@ class _AccountPageState extends State<AccountPage> {
     } on AuthException catch (error) {
       if (mounted) {
         setState(() {
-          _message = error.code == 'email_not_confirmed'
-              ? 'Verify your email before signing in.'
-              : 'That request could not be completed. Check your details and try again.'
-                    '${kDebugMode ? '\n[${error.statusCode}] ${error.code}: ${error.message}' : ''}';
+          _message = switch (error.code) {
+            'email_not_confirmed' => 'Verify your email before signing in.',
+            'invalid_credentials' => 'Wrong email or password.',
+            'user_already_exists' ||
+            'email_exists' => 'An account with this email already exists.',
+            'weak_password' =>
+              'Choose a stronger password (at least 6 characters).',
+            'email_address_invalid' => 'Enter a valid email.',
+            'otp_expired' => 'That code is wrong or has expired.',
+            'over_request_rate_limit' || 'over_email_send_rate_limit' =>
+              'Too many attempts. Wait a minute and try again.',
+            _ =>
+              'Something went wrong. Try again.'
+                  '${kDebugMode ? '\n[${error.statusCode}] ${error.code}: ${error.message}' : ''}',
+          };
         });
       }
     } on PostgrestException catch (error) {

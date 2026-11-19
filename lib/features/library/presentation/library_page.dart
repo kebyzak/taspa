@@ -471,6 +471,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
                   DropdownButtonFormField<String>(
                     initialValue: genre ?? '',
                     decoration: const InputDecoration(labelText: 'Genre'),
+                    icon: const Icon(PhosphorIconsRegular.caretDown, size: 18),
                     items: [
                       for (final item in const [
                         '',
@@ -685,7 +686,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
       title.caption,
       if (wanted && upcoming)
         'Out ${MaterialLocalizations.of(context).formatShortDate(release!)}',
-      if (entry.rating case final score?) '★ ${starsText(score)}',
+      if (entry.rating case final score?) '★ ${scoreText(score)}',
       ?entry.watchedOn,
     ].join(' · ');
     Widget? action;
@@ -739,6 +740,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
                 if (wanted)
                   PopupMenuButton<String>(
                     tooltip: 'Want actions',
+                    icon: const Icon(PhosphorIconsRegular.dotsThree),
                     enabled: !busy,
                     onSelected: (_) => _track(entry, 'set_wanted'),
                     itemBuilder: (context) => const [
@@ -761,7 +763,13 @@ class _LibraryBodyState extends State<_LibraryBody> {
     final compact = MediaQuery.textScalerOf(context).scale(16) <= 21;
     final shows = _section == LibrarySection.watchedShows;
     final continuing = _rows.where((entry) => _behind(entry.progress)).toList();
-    final others = _rows.where((entry) => !_behind(entry.progress)).toList();
+    // On hold and dropped shows are neither up to date nor waiting; they get their own section.
+    bool stopped(LibraryEntry entry) =>
+        const {'on_hold', 'dropped'}.contains(entry.progress?.intent);
+    final others = _rows
+        .where((entry) => !_behind(entry.progress) && !stopped(entry))
+        .toList();
+    final stoppedShows = _rows.where(stopped).toList();
     final sheetFilters =
         _genre != null ||
         _status != null ||
@@ -930,7 +938,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
                   poster: entry.title.poster,
                   title: entry.title.name,
                   caption: entry.watchedOn ?? entry.title.caption,
-                  badge: entry.rating == null ? null : '${entry.rating}',
+                  score: entry.rating,
                   onTap: () => _open(entry.title),
                 );
               },
@@ -961,6 +969,13 @@ class _LibraryBodyState extends State<_LibraryBody> {
                 padding: EdgeInsets.only(top: 24, bottom: 4),
               ),
             for (final entry in others) _showRow(entry, dimmed: true),
+          ],
+          if (shows && stoppedShows.isNotEmpty) ...[
+            const SectionHeader(
+              'On hold & dropped',
+              padding: EdgeInsets.only(top: 24, bottom: 4),
+            ),
+            for (final entry in stoppedShows) _showRow(entry, dimmed: true),
           ],
           if (_more)
             Padding(

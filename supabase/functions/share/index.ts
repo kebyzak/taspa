@@ -4,6 +4,10 @@ Deno.serve(async (request) => {
   if (request.method !== "GET") return reply("method_not_allowed",405);
   const url = new URL(request.url);
   const [kind,id] = url.pathname.split("/").slice(-2);
+  // Short title links: /m/<tmdb id> or /s/<tmdb id>. The app resolves the title itself.
+  if ((kind === "m" || kind === "s") && /^[1-9][0-9]{0,9}$/.test(id)) {
+    return new Response(null, { status: 302, headers: { ...noCache, Location: `com.taspa.taspa://share/${kind}/${id}` } });
+  }
   if (!["review","title"].includes(kind) || !idPattern.test(id) || !publicKey) return reply("unavailable",404);
   try {
     const result = await rpc<Record<string,unknown> | null>("public_share", { kind_value: kind, target: id }, { apikey: publicKey });

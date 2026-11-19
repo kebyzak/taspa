@@ -113,6 +113,12 @@ class _ShowSeasonsState extends State<ShowSeasons> {
       final now = DateTime.now();
       picked = await showDatePicker(
         context: context,
+        switchToInputEntryModeIcon: const Icon(
+          PhosphorIconsRegular.pencilSimple,
+        ),
+        switchToCalendarEntryModeIcon: const Icon(
+          PhosphorIconsRegular.calendarBlank,
+        ),
         initialDate: now,
         firstDate: DateTime(1870),
         lastDate: now,

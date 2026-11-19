@@ -269,10 +269,13 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
       return;
     }
     final [kind, id] = link.pathSegments;
-    if (!_shareId.hasMatch(id)) return;
+    final tmdb = RegExp(r'^[1-9][0-9]{0,9}$').hasMatch(id);
+    if (!tmdb && !_shareId.hasMatch(id)) return;
     final target = switch (kind) {
-      'title' => '/shared-title/$id',
-      'review' => '/reviews/$id',
+      'm' when tmdb => '/titles/movie/$id',
+      's' when tmdb => '/titles/show/$id',
+      'title' when !tmdb => '/shared-title/$id',
+      'review' when !tmdb => '/reviews/$id',
       _ => null,
     };
     if (target != null && _router.state.uri.path != target) {
