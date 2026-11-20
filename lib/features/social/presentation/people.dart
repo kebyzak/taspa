@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -765,18 +766,9 @@ class _PersonPageState extends State<PersonPage> {
                 'follow': relationship == null,
               })
             : context.push('/account');
-        final stats = [
-          if (library) ...[
-            ('${row['want'] ?? 0}', 'Want', 'wanted'),
-            ('${row['movies'] ?? 0}', 'Watched', 'watched_movies'),
-            (
-              '${row['series'] ?? row['shows'] ?? 0}',
-              'Series',
-              'watched_shows',
-            ),
-            ('${row['episodes'] ?? 0}', 'Episodes', 'watched_shows'),
-          ],
-        ];
+        final months = (row['year_months'] as List?)
+            ?.map((m) => (m as num).toInt())
+            .toList();
         final header = Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
           child: Column(
@@ -946,7 +938,6 @@ class _PersonPageState extends State<PersonPage> {
                           )
                         : PopupMenuButton<String>(
                             tooltip: 'More actions',
-                            icon: const Icon(PhosphorIconsRegular.dotsThree),
                             onSelected: (choice) => choice == 'report'
                                 ? reportSocial(context, widget.id, 'profile')
                                 : _change('set_block', {
@@ -976,47 +967,15 @@ class _PersonPageState extends State<PersonPage> {
                   ],
                 ],
               ),
-              if (stats.isNotEmpty) ...[
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    for (final (value, label, section) in stats)
-                      Expanded(
-                        child: InkWell(
-                          onTap: () => _lists.currentState?.select(section),
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            child: Column(
-                              children: [
-                                Text(
-                                  value,
-                                  style: const TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w600,
-                                    fontFeatures: [
-                                      ui.FontFeature.tabularFigures(),
-                                    ],
-                                  ),
-                                ),
-                                Text(
-                                  label,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.fade,
-                                  softWrap: false,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+              if (library && months != null) ...[
+                const SizedBox(height: 16),
+                _HoursStrip(
+                  year: (row['year'] as num?)?.toInt() ?? DateTime.now().year,
+                  months: months,
+                  onTap: () => context.push('/people/${widget.id}/insights'),
                 ),
-                const SizedBox(height: 8),
-                const Divider(),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
             ],
           ),
         );
@@ -1044,6 +1003,12 @@ class _PersonPageState extends State<PersonPage> {
                     owner: widget.id,
                     library: library,
                     reviews: row['can_read'] == true,
+                    counts: {
+                      'wanted': row['want'],
+                      'watched_movies': row['movies'],
+                      'watched_shows': row['series'] ?? row['shows'],
+                      'reviews': row['reviews'],
+                    },
                     generation: _generation,
                   )
                 else
@@ -1078,12 +1043,16 @@ class _ProfileLists extends StatefulWidget {
     required this.library,
     required this.reviews,
     required this.generation,
+    this.counts = const {},
   });
 
   final String owner;
   final bool library;
   final bool reviews;
   final int generation;
+
+  /// Section → count shown on its tab; a missing count shows the label alone.
+  final Map<String, Object?> counts;
 
   @override
   State<_ProfileLists> createState() => _ProfileListsState();
@@ -1164,28 +1133,32 @@ class _ProfileListsState extends State<_ProfileLists> {
     return SliverMainAxisGroup(
       slivers: [
         SliverToBoxAdapter(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                for (final (value, label) in [
-                  if (widget.library) ...const [
-                    ('wanted', 'Want'),
-                    ('watched_movies', 'Watched'),
-                    ('watched_shows', 'Series'),
-                  ],
-                  if (widget.reviews) ('reviews', 'Reviews'),
-                ])
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(label),
-                      selected: _section == value,
-                      onSelected: (_) => select(value),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: hairlineColor)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  for (final (value, label) in [
+                    if (widget.library) ...const [
+                      ('wanted', 'Want'),
+                      ('watched_movies', 'Watched'),
+                      ('watched_shows', 'Series'),
+                    ],
+                    if (widget.reviews) ('reviews', 'Reviews'),
+                  ])
+                    Expanded(
+                      child: _CountTab(
+                        label: label,
+                        count: widget.counts[value] as num?,
+                        selected: _section == value,
+                        onTap: () => select(value),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1715,4 +1688,159 @@ class _RelationshipPageState extends State<RelationshipPage> {
       ),
     );
   }
+}
+
+/// Profile entry to Insights: this year's hours with a month-by-month sparkline.
+class _HoursStrip extends StatelessWidget {
+  const _HoursStrip({
+    required this.year,
+    required this.months,
+    required this.onTap,
+  });
+  final int year;
+  final List<int> months;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = months.fold(0, (sum, m) => sum + m);
+    final peak = months.fold(0, math.max);
+    final hours = (total / 60).round();
+    return Semantics(
+      button: true,
+      label: 'Insights, $hours hours watched in $year',
+      excludeSemantics: true,
+      child: Material(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+            child: Row(
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$hours h',
+                      style: const TextStyle(
+                        fontFamily: 'Instrument Serif',
+                        fontSize: 34,
+                        height: 1,
+                        fontFeatures: [ui.FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'watched in $year',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: SizedBox(
+                    height: 40,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (final minutes in months)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 1.5,
+                              ),
+                              child: Container(
+                                height: peak == 0
+                                    ? 2
+                                    : math.max(2, 40 * minutes / peak),
+                                decoration: BoxDecoration(
+                                  color: minutes == peak && peak > 0
+                                      ? coralColor
+                                      : const Color(0xff49434a),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(
+                  PhosphorIconsRegular.caretRight,
+                  size: 18,
+                  color: mutedColor,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-width profile list tab: count over label, coral underline when selected.
+class _CountTab extends StatelessWidget {
+  const _CountTab({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+  final String label;
+  final num? count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    button: true,
+    label: count == null ? label : '$label, $count',
+    excludeSemantics: true,
+    child: InkWell(
+      onTap: onTap,
+      child: Container(
+        height: 56,
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: selected ? coralColor : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (count != null)
+              Text(
+                '$count',
+                style: const TextStyle(
+                  fontSize: 17,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600,
+                  color: inkColor,
+                  fontFeatures: [ui.FontFeature.tabularFigures()],
+                ),
+              ),
+            Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: count == null ? 15 : 12,
+                fontWeight: count == null ? FontWeight.w600 : FontWeight.w400,
+                color: selected ? inkColor : mutedColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
 }

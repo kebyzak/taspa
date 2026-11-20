@@ -438,11 +438,6 @@ class _TitleBodyState extends State<_TitleBody> {
                     PopupMenuItem(value: 'on_hold', child: Text('On Hold')),
                     PopupMenuItem(value: 'dropped', child: Text('Dropped')),
                   ],
-                  child: const Chip(
-                    label: Text('Status'),
-                    avatar: Icon(PhosphorIconsRegular.caretDown, size: 18),
-                    backgroundColor: pressedColor,
-                  ),
                 ),
               ],
             ),

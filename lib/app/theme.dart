@@ -60,7 +60,6 @@ ThemeData taspaTheme() {
     splashFactory: InkSparkle.splashFactory,
     visualDensity: VisualDensity.standard,
     dividerTheme: const DividerThemeData(color: hairlineColor, space: 1),
-    // Flutter's built-in back/close buttons and segment checkmarks default to Material glyphs.
     actionIconTheme: ActionIconThemeData(
       backButtonIconBuilder: (context) =>
           const Icon(PhosphorIconsRegular.arrowLeft),
@@ -504,12 +503,9 @@ class Avatar extends StatelessWidget {
   );
 }
 
-/// Scores are 0.5–10 in half-point steps: "7.5", "8".
 String scoreText(num score) =>
     score % 1 == 0 ? '${score.toInt()}' : score.toStringAsFixed(1);
 
-/// The owner's own score as a star-and-number tag. On a poster ([corner]) it sits flush in the
-/// top-right corner, matching the poster's 8px rounding; elsewhere it is a plain rounded pill.
 class ScoreBadge extends StatelessWidget {
   const ScoreBadge(this.score, {super.key, this.corner = false});
   final num score;
@@ -519,7 +515,6 @@ class ScoreBadge extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     height: 22,
     padding: const EdgeInsets.symmetric(horizontal: 6),
-    // Translucent coral picks up the poster underneath, so the score reads softer than a solid fill.
     decoration: BoxDecoration(
       color: coralColor.withValues(alpha: .75),
       borderRadius: corner

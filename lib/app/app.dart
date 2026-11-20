@@ -20,6 +20,7 @@ import '../features/library/presentation/library_page.dart';
 import '../features/notifications/inbox_page.dart';
 import '../features/notifications/notifications.dart';
 import '../features/social/data/social_repository.dart';
+import '../features/social/presentation/insights.dart';
 import '../features/social/presentation/must_import.dart';
 import '../features/social/presentation/people.dart';
 import '../features/social/presentation/reviews.dart';
@@ -145,6 +146,11 @@ class _TaspaAppState extends State<TaspaApp> with WidgetsBindingObserver {
         path: '/people/:id',
         builder: (context, state) =>
             _viewerPage(context, PersonPage(id: state.pathParameters['id']!)),
+      ),
+      GoRoute(
+        path: '/people/:id/insights',
+        builder: (context, state) =>
+            _viewerPage(context, InsightsPage(id: state.pathParameters['id']!)),
       ),
       GoRoute(
         path: '/people/:id/:list',

@@ -16,6 +16,7 @@ Built with Flutter on top of Supabase (Postgres, Auth, Storage, Edge Functions) 
 - **Feed**: every log of yours and of the people you follow, grouped by day. One person's episodes of one show on the same day collapse into a single item.
 - **Title pages**: IMDb rating (via OMDb, falling back to the TMDB score), your rating and review, cast, trailer, seasons and episodes.
 - **Profile**: Want, Series and Watched counts with lists that load as you scroll, followers and following.
+- **Insights**: watch time by month, streaks, a calendar of watching days, top genres, rating habits vs IMDb, most watched people, show status and a shareable recap card, per month, year or all time.
 - **Import from Must**: Want, watched movies, show progress, ratings and reviews from a public Must profile. The import runs on the server, keeps going after the app is closed, and sends a notification when it finishes.
 - **Notifications**: inbox and FCM push for new episodes, Want releases, follows, likes and comments.
 - **Offline**: an encrypted local store keeps the library readable and queues tracking changes until the device is back online.
@@ -84,7 +85,7 @@ Requirements: Flutter (Dart SDK 3.13 or newer) and an Android device or emulator
 
 On an empty Supabase project, open the SQL Editor and run `supabase/migrations/20261119000000_baseline.sql`. It creates the schemas, tables, functions, policies, the avatar bucket and the cron jobs.
 
-Put later schema changes in new migration files named after the baseline (`YYYYMMDDHHMMSS_description.sql`).
+The baseline is the only migration file. Add schema changes to it as a new section at the end, headed `-- ===== YYYYMMDDHHMMSS_description.sql =====`, and make them safe to re-run (`create or replace`, `if not exists`). On an existing project run just that new section.
 
 ### 2. Secrets
 

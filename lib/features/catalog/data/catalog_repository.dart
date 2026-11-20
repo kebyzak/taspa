@@ -352,11 +352,15 @@ class CatalogRepository {
         released: row['released'] as bool,
         releaseDay: row['release_day'] as String?,
         watched: watching ?? row['watched'] as bool,
-        watchedOn: individual
-            ? (payload?['watched_on'] as String?)
-            : (inBatch ? null : row['watched_on'] as String?),
+        // No chosen date: show the day it was ticked (today while the tick is still pending).
+        watchedOn: individual || inBatch
+            ? (payload?['watched_on'] as String? ??
+                  (watching == true ? _today() : null))
+            : (row['watched_on'] ?? row['marked_on']) as String?,
         revision: row['revision'] as int,
       );
     }).toList();
   }
 }
+
+String _today() => DateTime.now().toIso8601String().split('T').first;

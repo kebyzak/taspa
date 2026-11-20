@@ -2529,39 +2529,6 @@ language sql stable set search_path = '' as $$
 $$;
 
 
--- ===== 20261118002000_profile_counts.sql =====
-
--- Profile header counts for the Must-style profile: Want size and Series (tracked or with any watched episode).
-create or replace function api.profile_page(target uuid) returns jsonb
-language sql stable security definer set search_path = '' as $$
-  select jsonb_build_object('user_id', p.user_id, 'handle', p.handle, 'display_name', p.display_name,
-    'private', s.profile_private, 'own', p.user_id = (select auth.uid()),
-    'can_read', private.can_see(p.user_id, 'public'),
-    'can_read_library', private.can_see(p.user_id, s.library_audience),
-    'relationship', (select f.state from private.follows f where f.follower_id = (select auth.uid()) and f.followed_id = p.user_id))
-  || case when private.can_see(p.user_id, 'public') then jsonb_build_object('bio', s.bio,
-    'followers', (select count(*) from private.follows f where f.followed_id = p.user_id and f.state = 'accepted' and private.profile_visible(f.follower_id)),
-    'following', (select count(*) from private.follows f where f.follower_id = p.user_id and f.state = 'accepted' and private.profile_visible(f.followed_id)))
-    else '{}'::jsonb end
-  || case when private.can_see(p.user_id, s.library_audience) then jsonb_build_object(
-    'movies', (select count(distinct movie_id) from private.movie_viewings where user_id = p.user_id and deleted_at is null),
-    'shows', (select count(distinct show_id) from private.episode_marks where user_id = p.user_id and watched),
-    'series', (select count(*) from (
-        select show_id from private.tracked_shows where user_id = p.user_id and intent is not null
-        union
-        select show_id from private.episode_marks where user_id = p.user_id and watched) x),
-    'want', (select count(*) from private.wanted_entries w join api.titles t on t.id = w.title_id and t.catalog_state = 'available'
-        where w.user_id = p.user_id and w.added_at is not null),
-    'episodes', (select count(*) from private.episode_marks where user_id = p.user_id and watched))
-    else '{}'::jsonb end
-  || case when p.user_id = (select auth.uid()) then jsonb_build_object(
-    'library_audience', s.library_audience, 'tracking_activity', s.tracking_activity, 'market', s.market, 'timezone', s.timezone)
-    else '{}'::jsonb end
-  from api.profiles p join private.profile_settings s using (user_id)
-  where p.user_id = target and private.profile_visible(p.user_id);
-$$;
-
-
 -- ===== 20261118002100_ten_point_average.sql =====
 
 -- Ratings are shown on a 1–10 scale (stored scores were always 1–10); the community average follows.
@@ -3164,3 +3131,182 @@ returns jsonb language sql stable security definer set search_path = '' as $$
 $$;
 revoke execute on function api.export_library() from public, anon;
 grant execute on function api.export_library() to authenticated;
+
+
+-- ===== 20261120000000_profile_insights.sql =====
+
+-- Watch statistics for the profile Insights screen. Same audience as the library (profile_library);
+-- ratings are additionally gated by their own audience. Period is [from_day, to_day); no bounds = all time,
+-- which also counts undated logs. Streaks, months and weekdays are derived on the client from `days`.
+create or replace function api.profile_insights(owner_id uuid, from_day date default null, to_day date default null)
+returns jsonb language sql stable security definer set search_path = '' as $$
+  with allowed as materialized (
+    select s.user_id, coalesce(s.timezone, 'UTC') as tz from private.profile_settings s
+    where s.user_id = owner_id and private.can_see(s.user_id, s.library_audience)
+  ), watches as materialized (
+    -- Without a chosen date a log counts on the owner's local day it was made. Imported episodes have no
+    -- stamp (the import clears marked_at), so they stay undated.
+    select 'movie' as kind, v.movie_id as title_id,
+      coalesce(v.watched_on, (v.logged_at at time zone a.tz)::date) as day, coalesce(t.runtime_minutes, 0) as minutes,
+      row_number() over (partition by v.movie_id order by v.watched_on nulls first, v.logged_at) > 1 as rewatch
+    from private.movie_viewings v join allowed a on a.user_id = v.user_id
+    join api.titles t on t.id = v.movie_id
+    where v.deleted_at is null
+    union all
+    select 'episode', m.show_id, coalesce(m.watched_on, (m.marked_at at time zone a.tz)::date),
+      coalesce(e.runtime_minutes, t.runtime_minutes, 0), false
+    from private.episode_marks m join allowed a on a.user_id = m.user_id
+    join api.episodes e on e.id = m.episode_id
+    join api.titles t on t.id = m.show_id
+    where m.watched
+  ), period as materialized (
+    select * from watches w
+    where (from_day is null or w.day >= from_day) and (to_day is null or w.day < to_day)
+  ), titles as materialized (
+    select p.title_id, t.kind, t.display_title, t.poster_path, t.first_release_day,
+      sum(p.minutes) as minutes, count(*) as plays, md.details
+    from period p join api.titles t on t.id = p.title_id
+    left join private.title_metadata md on md.title_id = p.title_id
+    group by p.title_id, t.kind, t.display_title, t.poster_path, t.first_release_day, md.details
+  ), rated as materialized (
+    select x.title_id, x.kind, x.display_title, x.poster_path, r.score,
+      (x.details->'rating'->>'value')::numeric as imdb
+    from titles x join private.ratings r on r.title_id = x.title_id
+    where r.user_id = owner_id and r.season_id is null and r.score is not null
+      and private.can_see(r.user_id, r.audience)
+  ), shows as materialized (
+    -- Current status of the shows watched in the period; all time also counts shows started with no episode yet.
+    select private.show_snapshot(owner_id, s.show_id) as snap
+    from private.tracked_shows s join allowed a on a.user_id = s.user_id
+    where s.intent is not null
+      and ((from_day is null and to_day is null) or s.show_id in (select title_id from titles where kind = 'show'))
+  ), people as (
+    select role, tmdb_id, name, portrait, count(*) as titles from (
+      select distinct on (x.title_id, role, (p->>'tmdb_id')) role, x.title_id,
+        (p->>'tmdb_id')::bigint as tmdb_id, p->>'name' as name, p->>'portrait' as portrait
+      from titles x
+      cross join lateral (
+        select 'actor' as role, c as p from jsonb_array_elements(coalesce(x.details->'cast', '[]')) c
+        union all
+        select 'creator', c from jsonb_array_elements(coalesce(x.details->'creators', '[]')) c
+      ) credit
+    ) d group by role, tmdb_id, name, portrait
+  )
+  select jsonb_build_object(
+    'minutes', (select coalesce(sum(minutes), 0) from period),
+    'movie_minutes', (select coalesce(sum(minutes), 0) from period where kind = 'movie'),
+    'episode_minutes', (select coalesce(sum(minutes), 0) from period where kind = 'episode'),
+    'movies', (select count(*) from period where kind = 'movie'),
+    'episodes', (select count(*) from period where kind = 'episode'),
+    'rewatches', (select count(*) from period where rewatch),
+    'previous_minutes', case when from_day is not null and to_day is not null then
+      (select coalesce(sum(minutes), 0) from watches w
+       where w.day >= from_day - (to_day - from_day) and w.day < from_day) end,
+    'days', (select coalesce(jsonb_agg(d order by d.day), '[]') from (
+      select day, sum(minutes) as minutes, coalesce(sum(minutes) filter (where kind = 'movie'), 0) as movie_minutes,
+        count(*) filter (where kind = 'movie') as movies,
+        count(*) filter (where kind = 'episode') as episodes
+      from period where day is not null group by day) d),
+    'genres', (select coalesce(jsonb_agg(g order by g.minutes desc), '[]') from (
+      select name, sum(x.minutes) as minutes
+      from titles x cross join lateral jsonb_array_elements_text(coalesce(x.details->'genres', '[]')) name
+      group by name order by sum(x.minutes) desc limit 8) g),
+    'decades', (select coalesce(jsonb_agg(d order by d.decade), '[]') from (
+      select (extract(year from first_release_day)::int / 10) * 10 as decade, count(*) as titles
+      from titles where first_release_day is not null group by 1) d),
+    'ratings', jsonb_build_object(
+      'count', (select count(*) from rated),
+      'average', (select round(avg(score), 1) from rated),
+      'imdb_delta', (select round(avg(score - imdb), 1) from rated where imdb is not null),
+      'buckets', (select jsonb_agg((select count(*) from rated where ceil(score) = b) order by b)
+        from generate_series(1, 10) b),
+      'disagreements', (select coalesce(jsonb_agg(r order by abs(r.delta) desc), '[]') from (
+        select title_id as id, kind, display_title, poster_path, score, imdb, score - imdb as delta
+        from rated where imdb is not null and abs(score - imdb) >= 1
+        order by abs(score - imdb) desc limit 5) r)),
+    'actors', (select coalesce(jsonb_agg(p order by p.titles desc, p.name), '[]') from (
+      select tmdb_id, name, portrait, titles from people
+      where role = 'actor' and titles > 1 order by titles desc, name limit 10) p),
+    'creators', (select coalesce(jsonb_agg(p order by p.titles desc, p.name), '[]') from (
+      select tmdb_id, name, portrait, titles from people
+      where role = 'creator' and titles > 1 order by titles desc, name limit 10) p),
+    'show_status', (select coalesce(jsonb_object_agg(status, n), '{}') from (
+      select snap->>'status' as status, count(*) as n from shows group by 1) s),
+    'dropped_after', (select round(avg((snap->>'watched')::numeric), 1) from shows where snap->>'status' = 'dropped'),
+    'top_shows', (select coalesce(jsonb_agg(s order by s.minutes desc), '[]') from (
+      select title_id as id, display_title, poster_path, minutes, plays as episodes
+      from titles where kind = 'show' order by minutes desc limit 5) s),
+    'top_titles', (select coalesce(jsonb_agg(s order by s.minutes desc), '[]') from (
+      select title_id as id, display_title, poster_path, minutes
+      from titles where poster_path is not null order by minutes desc limit 3) s)
+  ) from allowed;
+$$;
+grant execute on function api.profile_insights(uuid, date, date) to anon, authenticated;
+
+-- Profile header: counts on the list tabs (now with reviews) and this year's watch time per month for the
+-- Insights strip. Same as the baseline version otherwise. The year follows the owner's time zone.
+create or replace function api.profile_page(target uuid) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('user_id', p.user_id, 'handle', p.handle, 'display_name', p.display_name,
+    'private', s.profile_private, 'own', p.user_id = (select auth.uid()),
+    'can_read', private.can_see(p.user_id, 'public'),
+    'can_read_library', private.can_see(p.user_id, s.library_audience),
+    'relationship', (select f.state from private.follows f where f.follower_id = (select auth.uid()) and f.followed_id = p.user_id))
+  || case when private.can_see(p.user_id, 'public') then jsonb_build_object('bio', s.bio,
+    'followers', (select count(*) from private.follows f where f.followed_id = p.user_id and f.state = 'accepted' and private.profile_visible(f.follower_id)),
+    'following', (select count(*) from private.follows f where f.follower_id = p.user_id and f.state = 'accepted' and private.profile_visible(f.followed_id)),
+    'reviews', (select count(*) from private.reviews r where r.user_id = p.user_id and private.review_visible(r)))
+    else '{}'::jsonb end
+  || case when private.can_see(p.user_id, s.library_audience) then jsonb_build_object(
+    'movies', (select count(distinct movie_id) from private.movie_viewings where user_id = p.user_id and deleted_at is null),
+    'shows', (select count(distinct show_id) from private.episode_marks where user_id = p.user_id and watched),
+    'series', (select count(*) from (
+        select show_id from private.tracked_shows where user_id = p.user_id and intent is not null
+        union
+        select show_id from private.episode_marks where user_id = p.user_id and watched) x),
+    'want', (select count(*) from private.wanted_entries w join api.titles t on t.id = w.title_id and t.catalog_state = 'available'
+        where w.user_id = p.user_id and w.added_at is not null),
+    'episodes', (select count(*) from private.episode_marks where user_id = p.user_id and watched),
+    'year', extract(year from now() at time zone coalesce(s.timezone, 'UTC'))::int,
+    'year_months', (select jsonb_agg(coalesce(m.minutes, 0) order by g.n) from generate_series(1, 12) g(n)
+      left join (
+        select extract(month from w.day)::int as month, sum(w.minutes) as minutes from (
+          -- Same day rule as profile_insights: chosen date, else the owner's local day of the log.
+          select coalesce(v.watched_on, (v.logged_at at time zone coalesce(s.timezone, 'UTC'))::date) as day,
+            coalesce(t.runtime_minutes, 0) as minutes
+          from private.movie_viewings v join api.titles t on t.id = v.movie_id
+          where v.user_id = p.user_id and v.deleted_at is null
+          union all
+          select coalesce(em.watched_on, (em.marked_at at time zone coalesce(s.timezone, 'UTC'))::date),
+            coalesce(e.runtime_minutes, t.runtime_minutes, 0)
+          from private.episode_marks em join api.episodes e on e.id = em.episode_id join api.titles t on t.id = em.show_id
+          where em.user_id = p.user_id and em.watched
+        ) w where extract(year from w.day) = extract(year from now() at time zone coalesce(s.timezone, 'UTC'))
+        group by 1
+      ) m on m.month = g.n))
+    else '{}'::jsonb end
+  || case when p.user_id = (select auth.uid()) then jsonb_build_object(
+    'library_audience', s.library_audience, 'tracking_activity', s.tracking_activity, 'market', s.market, 'timezone', s.timezone)
+    else '{}'::jsonb end
+  from api.profiles p join private.profile_settings s using (user_id)
+  where p.user_id = target and private.profile_visible(p.user_id);
+$$;
+
+-- Episode list: `marked_on` is the owner's local day an episode was ticked, shown when no watch date was chosen.
+-- Imported episodes have no stamp and still read "Date unknown".
+create or replace function api.show_episode_page(title_id uuid, selected_season uuid) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('episodes', coalesce(jsonb_agg(jsonb_build_object(
+    'id', e.id, 'number', e.episode_number, 'title', e.display_title, 'released', private.episode_released(e.release_day),
+    'release_day', e.release_day, 'watched', coalesce(m.watched, false), 'watched_on', m.watched_on,
+    'marked_on', (m.marked_at at time zone coalesce(
+      (select ps.timezone from private.profile_settings ps where ps.user_id = m.user_id), 'UTC'))::date,
+    'revision', coalesce(m.revision, 0)
+  ) order by e.episode_number, e.id), '[]'::jsonb))
+  from api.episodes e
+  join api.seasons s on s.id = e.season_id and s.available
+  join api.titles t on t.id = e.show_id and t.catalog_state = 'available'
+  left join private.episode_marks m on m.user_id = (select auth.uid()) and m.episode_id = e.id
+    and private.profile_visible(m.user_id)
+  where e.show_id = title_id and e.season_id = selected_season and e.available;
+$$;
