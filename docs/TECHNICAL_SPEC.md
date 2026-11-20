@@ -2,7 +2,7 @@
 
 **Architecture baseline · 18 November 2026**
 
-[PRODUCT_SPEC.md](PRODUCT_SPEC.md) defines product behavior and release scope. [DESIGN_DIRECTION.md](DESIGN_DIRECTION.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), and [BRAND_GUIDELINES.md](BRAND_GUIDELINES.md) govern presentation. The Splice artwork and platform assets under `assets/brand/` are the approved inputs. This specification defines how to deliver those requirements. The companion documents define [storage](DATABASE_SCHEMA.md), [contracts](API_SPEC.md), and [delivery order](IMPLEMENTATION_PLAN.md).
+[PRODUCT_SPEC.md](PRODUCT_SPEC.md) defines product behavior and release scope. [DESIGN_DIRECTION.md](DESIGN_DIRECTION.md), [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), and [BRAND_GUIDELINES.md](BRAND_GUIDELINES.md) govern presentation. The Splice artwork and platform assets under `assets/brand/` are the approved inputs. This specification defines how to deliver those requirements. The database schema and RPC contracts live in `supabase/migrations/`; Edge Functions live in `supabase/functions/`.
 
 ## Architecture decisions
 
@@ -22,12 +22,11 @@ Supabase is the sole backend. FCM handles transport only. Launch uses one databa
 | Directory | Responsibility |
 | --- | --- |
 | `lib/app/` | Composition root, environment configuration, theme and Splice assets, GoRouter, auth and notification intent coordination |
-| `lib/core/` | Supabase initialization, session storage, SQLite connection/migrations, shared error mapping, pagination mechanics, time and identifiers |
+| `lib/core/` | Backend configuration and the encrypted SQLite offline store (snapshots, drafts, tracking outbox, transient-error detection) |
 | `lib/features/auth/` | Session lifecycle, sign-up/verification, password reset and account settings |
 | `lib/features/catalog/` | Discover, categorized search, filmographies, titles, season navigation and catalog models |
 | `lib/features/library/` | Watched Movies/Shows/Wanted, history, progress, next episode, local snapshots and durable tracking operations |
-| `lib/features/opinions/` | Rating, review, privacy and spoiler reveal |
-| `lib/features/social/` | Following, user search, profiles, follows, comments, likes, blocks and reports |
+| `lib/features/social/` | Feed, following, user search, profiles, follows, ratings, reviews and spoiler reveal, comments, likes, blocks, reports and Must import |
 | `lib/features/notifications/` | Inbox, settings, device enrollment, and push intent resolution |
 | `supabase/` | Versioned SQL, local config and fixtures, Edge Functions, and scheduling definitions |
 
@@ -75,4 +74,4 @@ Use notification permissions when the user opts in, and handle platform/device t
 
 Use direct Supabase reads and scoped updates for simple resources, transactional RPCs for multi-entity writes or shaped sensitive reads, Edge Functions for foreign calls and privileged workflows. Keep DB projection, indexing and paging work close to the data. Collect aggregate job lag, retry/error counts, cache hit rate, 429s, and DB query latency using Supabase tooling. Start with small bounded schedules, provider quotas, and a defined data-retention policy. Inspect actual bottlenecks before adding infrastructure. Preview restores, alert on queue age, and keep support procedures for incorrect metadata and reports.
 
-The schema and API define Phase MVP behavior. Favorites and custom collections remain V1.1. The launch market, monetization, TMDB license, legal retention/export policy, and confirmed SMTP setup are launch dependencies mapped in the plan.
+The migrations define Phase MVP behavior. Favorites and custom collections remain V1.1. The launch market, monetization, TMDB license, legal retention/export policy, and confirmed SMTP setup are open launch dependencies.

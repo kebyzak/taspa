@@ -196,7 +196,7 @@ Wanted is for unstarted titles. A settled Watched movie or tracked show offers h
 
 **Recommended.**
 
-- Use a 1–10 scale in whole steps (stored as 1–10). Earlier half-star scores keep their stored value: 3½★ reads as 7. A blank rating means unrated. Show, season, and movie ratings can be set, changed, or cleared with or without review text.
+- Use a 0.5–10 scale in half-point steps, shown as a score out of 10 on five stars (two points per star): 3½★ reads as 7. A blank rating means unrated. Show, season, and movie ratings can be set, changed, or cleared with or without review text.
 - Maintain one editable personal rating and one editable review per movie, show, or season. Movie viewing history is separate. A rewatch leaves the current opinion intact unless the user edits it. Deleting review text leaves the rating intact. Changing a rating creates no new review or viewing.
 - Save a review privately or explicitly publish to an allowed audience. Rating and review audiences are set independently. Let users preview the selected audience, spoiler status, and target before publication. Profile and title pages show the latest eligible version. Include the author's rating next to a review only if the reader can also see the rating. Editing a review updates its existing feed item and conversation without creating a duplicate.
 - Show Taspa community rating and eligible rating count independently for movies, shows, and seasons. Aggregate only Public ratings from public profiles, one per member per target. Suppress the average below five eligible ratings and use an insufficient-ratings state. Private and Followers ratings remain personal or audience-scoped on permitted surfaces.

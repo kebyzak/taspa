@@ -1,6 +1,6 @@
 # Taspa
 
-A movie and TV diary. Track shows episode by episode, keep a Want list, log what you watched, rate with up to 5 stars in half-star steps, write reviews, follow friends, and bring your whole library over from Must.
+A movie and TV diary. Track shows episode by episode, keep a Want list, log what you watched, rate out of 10 in half-point steps, write reviews, follow friends, and bring your whole library over from Must.
 
 Built with Flutter on top of Supabase (Postgres, Auth, Storage, Edge Functions) with TMDB as the catalog source.
 
@@ -55,7 +55,7 @@ supabase/
     share/             public share links
 ```
 
-The product and design documents (`PRODUCT_SPEC.md`, `DESIGN_SYSTEM.md`, `DESIGN_DIRECTION.md`, `DATABASE_SCHEMA.md`, `API_SPEC.md`, `TECHNICAL_SPEC.md`) describe the intended behavior in detail.
+The product, design and architecture documents in [`docs/`](docs/) describe the intended behavior in detail; the database schema and RPCs are defined in `supabase/migrations/`.
 
 ## Running the app
 

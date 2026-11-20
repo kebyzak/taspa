@@ -2,14 +2,14 @@
 
 **Approved identity · 01 Splice · 18 November 2026**
 
-Two parallel diagonal cuts give the Splice T its silhouette and recall the angled join in a strip of tape. The custom Taspa wordmark repeats the cut in its initial. Both are fixed vector artwork. Use the [approved assets](assets/brand/) alongside the [design system](DESIGN_SYSTEM.md).
+Two parallel diagonal cuts give the Splice T its silhouette and recall the angled join in a strip of tape. The custom Taspa wordmark repeats the cut in its initial. Both are fixed vector artwork. Use the [approved assets](../assets/brand/) alongside the [design system](DESIGN_SYSTEM.md).
 
 ## Which mark to use
 
 | Mark | Use | Source |
 | --- | --- | --- |
-| Standalone symbol | App icon, native launch screen, and compact brand placements where Taspa is already identified | [Symbol SVG](assets/brand/symbol.svg) |
-| Wordmark | Brand introductions, export surfaces, and other brand placements where the name needs to be read | [Wordmark SVG](assets/brand/wordmark.svg) |
+| Standalone symbol | App icon, native launch screen, and compact brand placements where Taspa is already identified | [Symbol SVG](../assets/brand/symbol.svg) |
+| Wordmark | Brand introductions, export surfaces, and other brand placements where the name needs to be read | [Wordmark SVG](../assets/brand/wordmark.svg) |
 
 The wordmark contains the Splice T. Use it on its own as the full name treatment. Keep the app icon symbol-only. Use the supplied paths at their original proportions. Preserve the two cuts, internal spacing, and direction of the artwork. Use Instrument Serif and Instrument Sans for supporting typography as defined in the design system. The custom wordmark always comes from the SVG.
 
@@ -39,11 +39,11 @@ The platform folders under `assets/brand/` are staged resources for the Flutter 
 
 ### iOS app icon
 
-Copy the staged [AppIcon.appiconset](assets/brand/ios/Assets.xcassets/AppIcon.appiconset/) into `ios/Runner/Assets.xcassets/` as the target's `AppIcon` set. It includes an opaque, unmasked 1024 × 1024 sRGB PNG and its single-size iOS catalog metadata. Xcode supplies derived sizes and automatic appearance treatments. Editable [foreground and background SVG layers](assets/brand/ios/icon_layers/) are also available for Icon Composer. Keep the background square and let the system mask the icon. [Apple app icon guidance](https://developer.apple.com/design/human-interface-guidelines/app-icons/) · [Apple asset catalog configuration](https://developer.apple.com/documentation/xcode/configuring-your-app-icon)
+Copy the staged [AppIcon.appiconset](../assets/brand/ios/Assets.xcassets/AppIcon.appiconset/) into `ios/Runner/Assets.xcassets/` as the target's `AppIcon` set. It includes an opaque, unmasked 1024 × 1024 sRGB PNG and its single-size iOS catalog metadata. Xcode supplies derived sizes and automatic appearance treatments. Editable [foreground and background SVG layers](../assets/brand/ios/icon_layers/) are also available for Icon Composer. Keep the background square and let the system mask the icon. [Apple app icon guidance](https://developer.apple.com/design/human-interface-guidelines/app-icons/) · [Apple asset catalog configuration](https://developer.apple.com/documentation/xcode/configuring-your-app-icon)
 
 ### Android launcher icon
 
-Merge the staged [Android resources](assets/brand/android/res/) into `android/app/src/main/res/`. Set the merged app manifest's icon reference to `@mipmap/taspa_launcher`. Point an existing round-icon reference to that same resource if one is present.
+Merge the staged [Android resources](../assets/brand/android/res/) into `android/app/src/main/res/`. Set the merged app manifest's icon reference to `@mipmap/taspa_launcher`. Point an existing round-icon reference to that same resource if one is present.
 
 | Android path | Delivered resource |
 | --- | --- |
@@ -57,8 +57,8 @@ The adaptive vectors use a 108 dp layer and keep the artwork inside the central 
 
 Use a single coral Splice symbol centered on a graphite field. The common visual composition is a 96-unit square asset with about 68 units of visible mark width. Use system launch timing and let Flutter render the first frame as soon as it is ready. Match the initial Flutter canvas to graphite for a continuous handoff. [Flutter iOS launch screen](https://docs.flutter.dev/platform-integration/ios/launch-screen) · [Flutter Android splash screen](https://docs.flutter.dev/platform-integration/android/splash-screen)
 
-- **iOS.** Merge `TaspaLaunchMark.imageset` and `TaspaLaunchBackground.colorset` from [Assets.xcassets](assets/brand/ios/Assets.xcassets/) into the Runner asset catalog. In the native launch storyboard, center the image view at 96 × 96 pt with aspect fit and use the supplied named color for the background. The image set provides 1×, 2×, and 3× transparent PNGs. [Apple launch screen configuration](https://developer.apple.com/documentation/xcode/specifying-your-apps-launch-screen/)
+- **iOS.** Merge `TaspaLaunchMark.imageset` and `TaspaLaunchBackground.colorset` from [Assets.xcassets](../assets/brand/ios/Assets.xcassets/) into the Runner asset catalog. In the native launch storyboard, center the image view at 96 × 96 pt with aspect fit and use the supplied named color for the background. The image set provides 1×, 2×, and 3× transparent PNGs. [Apple launch screen configuration](https://developer.apple.com/documentation/xcode/specifying-your-apps-launch-screen/)
 - **Android 12 and later.** In the API 31+ launch theme, bind `android:windowSplashScreenBackground` to `@color/taspa_canvas` and `android:windowSplashScreenAnimatedIcon` to `@drawable/taspa_splash_mark_android12`. The drawable is static and padded on a 288 dp canvas for the system's no-icon-background mask. Keep the icon background unset. [Android SplashScreen sizing and themes](https://developer.android.com/develop/ui/views/launch/splash-screen)
 - **Earlier Android versions.** Use `@drawable/taspa_launch_background` as the launch window background. It centers the common 96 dp vector on graphite. Keep the Flutter template's launch-to-normal-theme handoff.
 
-The [shared splash SVG](assets/brand/splash.svg) is available for design reference and reuse. Verify launcher masks, themed icons, and cold-start appearance on devices once the native resources are integrated into the app.
+The [shared splash SVG](../assets/brand/splash.svg) is available for design reference and reuse. Verify launcher masks, themed icons, and cold-start appearance on devices once the native resources are integrated into the app.
