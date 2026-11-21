@@ -522,8 +522,8 @@ class _TabBar extends StatelessWidget {
       top: false,
       minimum: const EdgeInsets.only(bottom: 4),
       child: Container(
-        height: 64,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        height: 72,
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
         child: Row(
           children: [
             _tab(0),
@@ -543,12 +543,12 @@ class _TabBar extends StatelessWidget {
                       splashFactory: NoSplash.splashFactory,
                       highlightColor: Colors.transparent,
                       child: const SizedBox(
-                        width: 52,
-                        height: 52,
+                        width: 44,
+                        height: 44,
                         child: Icon(
                           PhosphorIconsBold.plus,
                           color: onCoralColor,
-                          size: 30,
+                          size: 24,
                         ),
                       ),
                     ),
@@ -572,13 +572,13 @@ class _HelpPage extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('About Taspa')),
     body: ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
       children: [
         Text(
           'Your film and TV diary',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 24),
         for (final (icon, text) in const [
           (
             PhosphorIconsRegular.checkCircle,
@@ -598,36 +598,19 @@ class _HelpPage extends StatelessWidget {
           ),
         ])
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+            padding: const EdgeInsets.only(bottom: 20),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, color: coralColor),
+                Icon(icon, size: 22, color: coralColor),
                 const SizedBox(width: 16),
-                Expanded(child: Text(text)),
+                Expanded(
+                  child: Text(text, style: const TextStyle(height: 1.45)),
+                ),
               ],
             ),
           ),
         const SizedBox(height: 16),
-        Card(
-          child: Column(
-            children: [
-              ListTile(
-                leading: const Icon(PhosphorIconsRegular.userGear),
-                title: const Text('Account and sign-in'),
-                trailing: const Icon(PhosphorIconsRegular.caretRight),
-                onTap: () => context.push('/account'),
-              ),
-              ListTile(
-                leading: const Icon(PhosphorIconsRegular.bell),
-                title: const Text('Notification settings'),
-                trailing: const Icon(PhosphorIconsRegular.caretRight),
-                onTap: () => context.push('/notification-settings'),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 24),
         Text(
           'Catalog data and imagery from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.',
           style: Theme.of(context).textTheme.bodySmall,

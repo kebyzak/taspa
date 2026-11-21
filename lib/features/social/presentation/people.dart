@@ -93,7 +93,11 @@ class _PersonTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListTile(
     contentPadding: EdgeInsets.zero,
-    leading: Avatar(row['handle'] as String, size: 40),
+    leading: Avatar(
+      row['handle'] as String,
+      size: 40,
+      userId: row['user_id'] as String?,
+    ),
     title: Text(row['display_name'] as String? ?? '@${row['handle']}'),
     subtitle: row['display_name'] == null ? null : Text('@${row['handle']}'),
     trailing: action,
@@ -110,70 +114,38 @@ class FollowingPage extends StatefulWidget {
 
 class _FollowingPageState extends State<FollowingPage> {
   List<SocialRow> _rows = [];
-  final _expanded = <String>{};
   bool _working = false, _failed = false, _more = false, _loaded = false;
 
-  /// Groups newest-first rows by local day; one person's episodes of one show on a day become a single item
-  /// whose 'episodes' holds every row of the bundle.
-  static List<({String label, List<SocialRow> items})> _days(
-    List<SocialRow> rows,
-  ) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final days = <String, List<SocialRow>>{};
-    final bundles = <String, SocialRow>{};
+  static List<List<SocialRow>> _groups(List<SocialRow> rows) {
+    final groups = <List<SocialRow>>[];
+    final bundles = <Object?, SocialRow>{};
+    List<SocialRow>? run;
     for (final row in rows) {
-      final at = DateTime.tryParse(row['created_at'] as String? ?? '')
-          ?.toLocal();
-      if (at == null) continue;
-      final day = DateTime(at.year, at.month, at.day);
-      final gap = today.difference(day).inDays;
-      final label = switch (gap) {
-        0 => 'Today',
-        1 => 'Yesterday',
-        _ =>
-          '${_weekdays[day.weekday - 1]}, ${day.day} ${_months[day.month - 1]}${day.year == now.year ? '' : ' ${day.year}'}',
-      };
-      final items = days.putIfAbsent(label, () => []);
-      if (row['kind'] == 'episode') {
-        final key = '$label|${row['actor_id']}|${row['title_id']}';
-        if (bundles[key] case final bundle?) {
-          (bundle['episodes'] as List<SocialRow>).add(row);
-          continue;
-        }
-        items.add(
-          bundles[key] = {
+      if (row['review'] != null || row['kind'] == 'import') {
+        groups.add([row]);
+        run = null;
+        continue;
+      }
+      if (run == null || run.first['actor_id'] != row['actor_id']) {
+        groups.add(run = []);
+        bundles.clear();
+      }
+      if (row['kind'] != 'episode') {
+        run.add(row);
+      } else if (bundles[row['title_id']] case final bundle?) {
+        (bundle['episodes'] as List<SocialRow>).add(row);
+      } else {
+        run.add(
+          bundles[row['title_id']] = {
             ...row,
             'episodes': <SocialRow>[row],
           },
         );
-      } else {
-        items.add(row);
       }
     }
-    return [
-      for (final MapEntry(:key, :value) in days.entries)
-        (label: key, items: value),
-    ];
+    return groups;
   }
 
-  static const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  static const _months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-
-  // Own watches are part of the feed, so tracking changes refresh it.
   late final _changes = [
     context.read<LibraryRepository>().changes.listen((_) => _load()),
     context.read<SocialRepository>().changes.listen((_) => _load()),
@@ -283,26 +255,7 @@ class _FollowingPageState extends State<FollowingPage> {
                         label: const Text('Find people'),
                       ),
                     ),
-                  for (final day in _days(_rows)) ...[
-                    SectionHeader(
-                      day.label,
-                      padding: const EdgeInsets.only(top: 8, bottom: 4),
-                    ),
-                    for (final item
-                        in _expanded.contains(day.label)
-                            ? day.items
-                            : day.items.take(4))
-                      _FeedEntry(item),
-                    if (day.items.length > 4 && !_expanded.contains(day.label))
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: TextButton(
-                          onPressed: () =>
-                              setState(() => _expanded.add(day.label)),
-                          child: Text('Show all ${day.items.length}'),
-                        ),
-                      ),
-                  ],
+                  for (final group in _groups(_rows)) _FeedGroup(group),
                   if (_more && !_working)
                     TextButton(
                       onPressed: () => _load(append: true),
@@ -315,11 +268,18 @@ class _FollowingPageState extends State<FollowingPage> {
   }
 }
 
-/// One Feed item: who did what and when, then the title card (or the review card).
-class _FeedEntry extends StatelessWidget {
-  const _FeedEntry(this.row);
+class _FeedGroup extends StatefulWidget {
+  const _FeedGroup(this.rows);
 
-  final SocialRow row;
+  final List<SocialRow> rows;
+
+  @override
+  State<_FeedGroup> createState() => _FeedGroupState();
+}
+
+class _FeedGroupState extends State<_FeedGroup> {
+  static const _collapsed = 3;
+  bool _expanded = false;
 
   static String _ago(String? value) {
     final at = DateTime.tryParse(value ?? '');
@@ -329,12 +289,117 @@ class _FeedEntry extends StatelessWidget {
     if (gap.inHours < 1) return '${gap.inMinutes}m';
     if (gap.inDays < 1) return '${gap.inHours}h';
     if (gap.inDays < 7) return '${gap.inDays}d';
-    return '${at.day}.${at.month.toString().padLeft(2, '0')}.${at.year % 100}';
+    return readableDate(at.toLocal());
   }
 
   @override
   Widget build(BuildContext context) {
-    final own = row['own'] == true;
+    final first = widget.rows.first;
+    final header = _ago(first['created_at'] as String?);
+    final own = first['own'] == true;
+    final review = first['review'] as SocialRow?;
+    final verb = review != null
+        ? ' reviewed'
+        : first['kind'] == 'import'
+        ? ' imported ${first['count']} titles from ${first['source']}'
+        : '';
+    final shown = _expanded
+        ? widget.rows
+        : widget.rows.take(_collapsed).toList();
+    final hidden = widget.rows.length - shown.length;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            onTap: () => context.push('/people/${first['actor_id']}'),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Avatar(
+                    first['handle'] as String,
+                    size: 32,
+                    userId: first['actor_id'] as String?,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: own ? 'You' : '@${first['handle']}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          TextSpan(
+                            text: verb,
+                            style: const TextStyle(color: mutedColor),
+                          ),
+                        ],
+                      ),
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ),
+                  Text(header, style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (review != null)
+            ReviewTile(review, showTitle: true)
+          else if (first['kind'] != 'import')
+            Card(
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                children: [
+                  for (final (index, row) in shown.indexed) ...[
+                    if (index > 0) const Divider(indent: 68),
+                    _FeedTitleRow(
+                      row,
+                      time: switch (_ago(row['created_at'] as String?)) {
+                        final ago when ago != header => ago,
+                        _ => '',
+                      },
+                    ),
+                  ],
+                  if (hidden > 0) ...[
+                    const Divider(),
+                    InkWell(
+                      onTap: () => setState(() => _expanded = true),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        child: Center(
+                          child: Text(
+                            'Show $hidden more',
+                            style: const TextStyle(
+                              color: coralColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FeedTitleRow extends StatelessWidget {
+  const _FeedTitleRow(this.row, {this.time = ''});
+
+  final SocialRow row;
+  final String time;
+
+  @override
+  Widget build(BuildContext context) {
     final episodes = [...?(row['episodes'] as List<SocialRow>?)]
       ..sort(
         (a, b) =>
@@ -346,118 +411,61 @@ class _FeedEntry extends StatelessWidget {
       );
     String code(SocialRow e) =>
         'S${e['season_number']} E${e['episode_number']}';
-    final verb = switch (row['kind']) {
-      _ when row['review'] != null => 'reviewed',
-      'rating' => 'rated',
-      'first_show' => 'started watching',
-      'wanted' => 'wants to watch',
-      'import' => 'imported ${row['count']} titles from ${row['source']}',
-      'episode' when episodes.length > 1 =>
-        'watched ${episodes.length} episodes',
-      'episode' => 'watched an episode',
-      _ => 'watched',
-    };
-    final detail = switch (episodes) {
-      [] => null,
+    final what = switch (episodes) {
       [final e] => '${code(e)} · ${e['episode']}',
-      [final first, ..., final last] => '${code(first)} – ${code(last)}',
+      [final first, ..., final last] =>
+        '${episodes.length} episodes · ${code(first)} – ${code(last)}',
+      [] => [
+        switch (row['kind']) {
+          'rating' => 'Rated',
+          'first_show' => 'Started watching',
+          'wanted' => 'Wants to watch',
+          _ => 'Watched',
+        },
+        if (row['watched_on'] case final String day) readableDay(day),
+      ].join(' · '),
     };
+    final caption = time.isEmpty ? what : '$what · $time';
     final title =
         '${row['title']}${row['season'] == null ? '' : ' · ${row['season']}'}';
-    final open = '/titles/${row['media']}/${row['tmdb_id']}';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            onTap: () => context.push('/people/${row['actor_id']}'),
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
+    return InkWell(
+      onTap: () => context.push('/titles/${row['media']}/${row['tmdb_id']}'),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 48,
+              height: 72,
+              child: Artwork(row['poster'] as String?),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Avatar(row['handle'] as String, size: 32),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: own ? 'You' : '@${row['handle']}',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          TextSpan(
-                            text: ' $verb',
-                            style: const TextStyle(color: mutedColor),
-                          ),
-                        ],
-                      ),
-                      style: const TextStyle(fontSize: 15),
-                    ),
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
                   Text(
-                    _ago(row['created_at'] as String?),
+                    caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 4),
-          if (row['review'] case final SocialRow review)
-            ReviewTile(review, showTitle: true)
-          else if (row['kind'] != 'import')
-            Card(
-              child: InkWell(
-                onTap: () => context.push(open),
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 48,
-                        height: 72,
-                        child: Artwork(row['poster'] as String?),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            Text(
-                              detail ??
-                                  [
-                                    row['media'] == 'show'
-                                        ? 'TV show'
-                                        : 'Movie',
-                                    if (row['watched_on'] case final String day)
-                                      day,
-                                  ].join(' · '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Ratings and watched logs both carry the actor's score when they rated it.
-                      if (row['score'] case final num score) ...[
-                        StarScore(score),
-                        const SizedBox(width: 8),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
+            if (row['score'] case final num score) ...[
+              const SizedBox(width: 12),
+              StarScore(score),
+              const SizedBox(width: 12),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -480,7 +488,6 @@ class _PersonPageState extends State<PersonPage> {
   bool _regionSent = false;
   final _lists = GlobalKey<_ProfileListsState>();
 
-  // Counts and lists change when anything is logged, rated or followed anywhere in the app.
   late final _changes = [
     context.read<LibraryRepository>().changes.listen((_) => _reload()),
     context.read<SocialRepository>().changes.listen((_) => _reload()),
@@ -512,11 +519,10 @@ class _PersonPageState extends State<PersonPage> {
   Future<SocialRow?> _fetch() async {
     final repo = context.read<SocialRepository>();
     final row = await repo.one('profile_page', {'target': widget.id});
-    // Own profile carries market/timezone: keep them in step with the phone so release reminders just work.
     if (row != null && row.containsKey('timezone') && !_regionSent) {
       final region = _deviceRegion();
       if (region.entries.any((field) => row[field.key] != field.value)) {
-        _regionSent = true; // Once per page: the write fires a change that refetches this profile.
+        _regionSent = true;
         unawaited(
           repo
               .change('profile_update', {'fields': region})
@@ -535,7 +541,6 @@ class _PersonPageState extends State<PersonPage> {
     return {
       if (country != null && RegExp(r'^[A-Z]{2}$').hasMatch(country))
         'market': country,
-      // shortcut: fixed-offset Etc zone (no DST, skips half-hour zones); add a native IANA lookup for DST markets.
       if (offset.inMinutes % 60 == 0)
         'timezone': hours == 0
             ? 'Etc/UTC'
@@ -545,10 +550,7 @@ class _PersonPageState extends State<PersonPage> {
 
   Future<void> _change(String rpc, SocialRow params) async {
     try {
-      await context.read<SocialRepository>().change(
-        rpc,
-        params,
-      ); // The change stream reloads this page.
+      await context.read<SocialRepository>().change(rpc, params);
     } on Exception {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -692,7 +694,6 @@ class _PersonPageState extends State<PersonPage> {
     }
   }
 
-  /// Everything the owner logged as JSON, saved where they pick in the system save dialog (Downloads by default).
   Future<void> _export() async {
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -749,7 +750,7 @@ class _PersonPageState extends State<PersonPage> {
           child: Text(
             handle[0].toUpperCase(),
             style: const TextStyle(
-              fontFamily: 'Instrument Serif',
+              fontFamily: 'Gloock',
               fontSize: 32,
               color: coralColor,
             ),
@@ -812,7 +813,7 @@ class _PersonPageState extends State<PersonPage> {
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontFamily: 'Instrument Serif',
+                            fontFamily: 'Gloock',
                             fontSize: 28,
                             height: 1.1,
                             color: inkColor,
@@ -988,7 +989,6 @@ class _PersonPageState extends State<PersonPage> {
             await _profile;
           },
           child: NotificationListener<ScrollNotification>(
-            // Load the next page of the open list when the user nears the bottom.
             onNotification: (note) {
               if (note.metrics.extentAfter < 600) _lists.currentState?.more();
               return false;
@@ -1035,7 +1035,6 @@ class _PersonPageState extends State<PersonPage> {
   }
 }
 
-/// Must-style lists under the profile header: chips, then a poster grid that keeps loading as you scroll.
 class _ProfileLists extends StatefulWidget {
   const _ProfileLists({
     super.key,
@@ -1050,8 +1049,6 @@ class _ProfileLists extends StatefulWidget {
   final bool library;
   final bool reviews;
   final int generation;
-
-  /// Section → count shown on its tab; a missing count shows the label alone.
   final Map<String, Object?> counts;
 
   @override
@@ -1256,7 +1253,6 @@ class _ProfileListsState extends State<_ProfileLists> {
   }
 }
 
-/// Sort menu plus direction toggle for a profile library section.
 class _LibrarySortBar extends StatelessWidget {
   const _LibrarySortBar({
     required this.owner,
@@ -1270,7 +1266,6 @@ class _LibrarySortBar extends StatelessWidget {
   final bool ascending;
   final void Function(String sort, bool ascending) onChanged;
 
-  /// Episode count only exists for shows; other sections fall back to activity.
   static String fit(String sort, String section) =>
       sort == 'episodes' && section != 'watched_shows' ? 'activity' : sort;
 
@@ -1293,7 +1288,6 @@ class _LibrarySortBar extends StatelessWidget {
         PopupMenuButton<String>(
           tooltip: 'Sort by',
           initialValue: sort,
-          // Activity reads newest first; the others read best/highest first.
           onSelected: (value) => onChanged(value, false),
           itemBuilder: (context) => [
             for (final (value, text) in sorts)
@@ -1690,13 +1684,13 @@ class _RelationshipPageState extends State<RelationshipPage> {
   }
 }
 
-/// Profile entry to Insights: this year's hours with a month-by-month sparkline.
 class _HoursStrip extends StatelessWidget {
   const _HoursStrip({
     required this.year,
     required this.months,
     required this.onTap,
   });
+
   final int year;
   final List<int> months;
   final VoidCallback onTap;
@@ -1726,7 +1720,7 @@ class _HoursStrip extends StatelessWidget {
                     Text(
                       '$hours h',
                       style: const TextStyle(
-                        fontFamily: 'Instrument Serif',
+                        fontFamily: 'Gloock',
                         fontSize: 34,
                         height: 1,
                         fontFeatures: [ui.FontFeature.tabularFigures()],
@@ -1759,7 +1753,7 @@ class _HoursStrip extends StatelessWidget {
                                 decoration: BoxDecoration(
                                   color: minutes == peak && peak > 0
                                       ? coralColor
-                                      : const Color(0xff49434a),
+                                      : const Color(0xff3a4350),
                                   borderRadius: BorderRadius.circular(2),
                                 ),
                               ),
@@ -1784,7 +1778,6 @@ class _HoursStrip extends StatelessWidget {
   }
 }
 
-/// Full-width profile list tab: count over label, coral underline when selected.
 class _CountTab extends StatelessWidget {
   const _CountTab({
     required this.label,
@@ -1792,6 +1785,7 @@ class _CountTab extends StatelessWidget {
     required this.selected,
     required this.onTap,
   });
+
   final String label;
   final num? count;
   final bool selected;

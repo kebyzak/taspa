@@ -119,6 +119,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
   late final LibrarySection _section = widget.section;
   late MediaKind? _filter = widget.media;
   bool _showWant = true;
+  bool _showUpToDate = true;
   List<LibraryEntry> _wantShows = [];
   LibraryEntry? _wantCursor;
   LibrarySort _sort = LibrarySort.activity;
@@ -373,6 +374,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
     var status = _status;
     var minimum = _minimumRating;
     var showWant = _showWant;
+    var showUpToDate = _showUpToDate;
     final movie = _section == LibrarySection.watchedMovies;
     final show = _section == LibrarySection.watchedShows;
     Widget chips<T>(
@@ -456,6 +458,15 @@ class _LibraryBodyState extends State<_LibraryBody> {
                     value: showWant,
                     onChanged: (value) => update(() => showWant = value),
                   ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Show up to date'),
+                    subtitle: const Text(
+                      'Shows with no released episode left to watch',
+                    ),
+                    value: showUpToDate,
+                    onChanged: (value) => update(() => showUpToDate = value),
+                  ),
                   const SizedBox(height: 16),
                 ],
                 if (movie) ...[
@@ -515,6 +526,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
                     status = null;
                     minimum = null;
                     showWant = true;
+                    showUpToDate = true;
                     Navigator.pop(context, true);
                   },
                   child: const Text('Reset'),
@@ -532,6 +544,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
       _status = status;
       _minimumRating = minimum;
       _showWant = showWant;
+      _showUpToDate = showUpToDate;
       _rows = [];
       _more = false;
     });
@@ -555,6 +568,9 @@ class _LibraryBodyState extends State<_LibraryBody> {
     padding: EdgeInsets.zero,
     tapTargetSize: MaterialTapTargetSize.padded,
   );
+  static final _checkAction = _smallAction.copyWith(
+    side: const WidgetStatePropertyAll(BorderSide(color: coralColor)),
+  );
 
   Widget _showRow(LibraryEntry entry, {required bool dimmed}) {
     final title = entry.title;
@@ -572,7 +588,8 @@ class _LibraryBodyState extends State<_LibraryBody> {
         ? 'Season $pending · next episode'
         : [
             ?progress?.statusLabel,
-            if (progress?.upcomingDay case final day?) 'Next $day',
+            if (progress?.upcomingDay case final day?)
+              'Next ${readableDay(day)}',
           ].join(' · ');
     final row = Card(
       child: InkWell(
@@ -634,24 +651,28 @@ class _LibraryBodyState extends State<_LibraryBody> {
               ),
               const SizedBox(width: 8),
               if (canMark)
-                IconButton.filled(
+                IconButton.outlined(
                   tooltip: next != null
                       ? 'Mark S${next.season}E${next.number} ${next.title} watched'
                       : 'Mark next episode watched',
                   onPressed: busy
                       ? null
                       : () => _track(entry, 'set_episode_watched'),
-                  style: _smallAction,
+                  style: _checkAction,
                   icon: busy
                       ? const SizedBox(
                           width: 14,
                           height: 14,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: onCoralColor,
+                            color: coralColor,
                           ),
                         )
-                      : const Icon(PhosphorIconsBold.check, size: 16),
+                      : const Icon(
+                          PhosphorIconsRegular.check,
+                          size: 12,
+                          color: coralColor,
+                        ),
                 )
               else
                 const SizedBox(
@@ -684,25 +705,28 @@ class _LibraryBodyState extends State<_LibraryBody> {
         release?.isAfter(DateUtils.dateOnly(DateTime.now())) ?? false;
     final meta = [
       title.caption,
-      if (wanted && upcoming)
-        'Out ${MaterialLocalizations.of(context).formatShortDate(release!)}',
+      if (wanted && upcoming) 'Out ${readableDate(release!)}',
       if (entry.rating case final score?) '★ ${scoreText(score)}',
-      ?entry.watchedOn,
+      if (entry.watchedOn case final day?) readableDay(day),
     ].join(' · ');
     Widget? action;
     if (wanted && title.kind == MediaKind.movie && !upcoming) {
-      action = IconButton.filledTonal(
+      action = IconButton.outlined(
         tooltip: 'Mark ${title.name} watched',
         onPressed: busy ? null : () => _track(entry, 'mark_movie_watched'),
-        style: _smallAction,
-        icon: const Icon(PhosphorIconsBold.check, size: 16),
+        style: _checkAction,
+        icon: const Icon(
+          PhosphorIconsRegular.check,
+          size: 12,
+          color: coralColor,
+        ),
       );
     } else if (wanted && (progress?.released ?? 0) > 0) {
-      action = IconButton.filledTonal(
+      action = IconButton.outlined(
         tooltip: 'Start watching ${title.name}',
         onPressed: busy ? null : () => _track(entry, 'start_show'),
-        style: _smallAction,
-        icon: const Icon(PhosphorIconsFill.play, size: 16),
+        style: _checkAction,
+        icon: const Icon(PhosphorIconsFill.play, size: 12, color: coralColor),
       );
     }
     return Padding(
@@ -763,7 +787,6 @@ class _LibraryBodyState extends State<_LibraryBody> {
     final compact = MediaQuery.textScalerOf(context).scale(16) <= 21;
     final shows = _section == LibrarySection.watchedShows;
     final continuing = _rows.where((entry) => _behind(entry.progress)).toList();
-    // On hold and dropped shows are neither up to date nor waiting; they get their own section.
     bool stopped(LibraryEntry entry) =>
         const {'on_hold', 'dropped'}.contains(entry.progress?.intent);
     final others = _rows
@@ -774,7 +797,8 @@ class _LibraryBodyState extends State<_LibraryBody> {
         _genre != null ||
         _status != null ||
         _minimumRating != null ||
-        !_showWant;
+        !_showWant ||
+        !_showUpToDate;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
@@ -937,7 +961,9 @@ class _LibraryBodyState extends State<_LibraryBody> {
                 return PosterCard(
                   poster: entry.title.poster,
                   title: entry.title.name,
-                  caption: entry.watchedOn ?? entry.title.caption,
+                  caption: entry.watchedOn == null
+                      ? entry.title.caption
+                      : readableDay(entry.watchedOn!),
                   score: entry.rating,
                   onTap: () => _open(entry.title),
                 );
@@ -962,7 +988,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
                 child: const Text('Load more'),
               ),
           ],
-          if (shows && others.isNotEmpty) ...[
+          if (shows && _showUpToDate && others.isNotEmpty) ...[
             if (continuing.isNotEmpty || (_showWant && _wantShows.isNotEmpty))
               const SectionHeader(
                 'Up to date',

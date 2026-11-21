@@ -201,7 +201,15 @@ async function externalRating(row: Json): Promise<Json | null> {
         const value = Number(data.imdbRating);
         const votes = Number(String(data.imdbVotes ?? "").replace(/,/g, ""));
         if (data.Response === "True" && Number.isFinite(value) && value > 0 && value <= 10) {
-          return { source: "imdb", value, votes: Number.isSafeInteger(votes) ? votes : null, imdb_id: validId };
+          const ratings: Json[] = Array.isArray(data.Ratings) ? data.Ratings : [];
+          const tomato = parseInt(String(ratings.find((r) => r?.Source === "Rotten Tomatoes")?.Value ?? ""), 10);
+          return {
+            source: "imdb",
+            value,
+            votes: Number.isSafeInteger(votes) ? votes : null,
+            imdb_id: validId,
+            rotten: tomato >= 0 && tomato <= 100 ? tomato : null,
+          };
         }
       }
     } catch {

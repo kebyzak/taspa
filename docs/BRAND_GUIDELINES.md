@@ -11,7 +11,7 @@ Two parallel diagonal cuts give the Splice T its silhouette and recall the angle
 | Standalone symbol | App icon, native launch screen, and compact brand placements where Taspa is already identified | [Symbol SVG](../assets/brand/symbol.svg) |
 | Wordmark | Brand introductions, export surfaces, and other brand placements where the name needs to be read | [Wordmark SVG](../assets/brand/wordmark.svg) |
 
-The wordmark contains the Splice T. Use it on its own as the full name treatment. Keep the app icon symbol-only. Use the supplied paths at their original proportions. Preserve the two cuts, internal spacing, and direction of the artwork. Use Instrument Serif and Instrument Sans for supporting typography as defined in the design system. The custom wordmark always comes from the SVG.
+The wordmark contains the Splice T. Use it on its own as the full name treatment. Keep the app icon symbol-only. Use the supplied paths at their original proportions. Preserve the two cuts, internal spacing, and direction of the artwork. Use Gloock and Noto Sans for supporting typography as defined in the design system. The custom wordmark always comes from the SVG.
 
 ## Proportions, clear space, and minimum sizes
 

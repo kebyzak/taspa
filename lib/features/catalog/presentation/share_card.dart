@@ -14,14 +14,12 @@ import '../../social/data/social_repository.dart';
 import '../data/catalog_repository.dart';
 import 'artwork.dart';
 
-/// Short public links: `<base>/m/<tmdb id>` or `/s/<tmdb id>`. Set SHARE_URL once a short domain proxies to the share function.
 const _shareBase = String.fromEnvironment('SHARE_URL');
 
 String titleLink(CatalogTitle title) =>
     '${_shareBase.isEmpty ? '$backendUrl/functions/v1/share' : _shareBase}'
     '/${title.kind == MediaKind.movie ? 'm' : 's'}/${title.tmdbId}';
 
-/// Previews a 4:5 poster card for [title], then shares it as a PNG with the title link as the caption.
 Future<void> shareTitle(BuildContext context, CatalogTitle title) =>
     showModalBottomSheet<void>(
       context: context,
@@ -32,6 +30,7 @@ Future<void> shareTitle(BuildContext context, CatalogTitle title) =>
 
 class _ShareSheet extends StatefulWidget {
   const _ShareSheet(this.title);
+
   final CatalogTitle title;
 
   @override
@@ -60,7 +59,6 @@ class _ShareSheetState extends State<_ShareSheet> {
 
   String get _link => titleLink(widget.title);
 
-  /// The viewer's own score, if signed in and rated; the card just leaves it out otherwise.
   Future<num?> _loadScore() async {
     final id = widget.title.id;
     if (id == null ||
@@ -83,7 +81,6 @@ class _ShareSheetState extends State<_ShareSheet> {
     try {
       final boundary =
           _card.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      // 360×450 logical → 1080×1350, the 4:5 size feeds and stories expect.
       final image = await boundary.toImage(pixelRatio: 3);
       final png = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
@@ -97,9 +94,7 @@ class _ShareSheetState extends State<_ShareSheet> {
         ),
       );
       if (mounted) Navigator.pop(context);
-    } on Object catch (error, stack) {
-      // Shown in the sheet: a SnackBar would sit behind it. Any failure (plugin, render) must surface, not vanish.
-      debugPrint('Share failed: $error\n$stack');
+    } on Object catch (_) {
       if (mounted) setState(() => _error = 'Could not share. Try again.');
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -154,6 +149,7 @@ class _ShareSheetState extends State<_ShareSheet> {
 
 class _TitleCard extends StatelessWidget {
   const _TitleCard(this.title, {this.score});
+
   final CatalogTitle title;
   final num? score;
 
@@ -178,7 +174,6 @@ class _TitleCard extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           const ColoredBox(color: canvasColor),
-          // The poster itself, blurred and dimmed, as a backdrop in its own colours.
           Opacity(
             opacity: .45,
             child: ImageFiltered(
@@ -192,7 +187,7 @@ class _TitleCard extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 stops: [.35, 1],
-                colors: [Color(0x00141416), canvasColor],
+                colors: [Color(0x0012161c), canvasColor],
               ),
             ),
           ),

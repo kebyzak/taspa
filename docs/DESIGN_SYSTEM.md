@@ -37,10 +37,10 @@ Use primary and secondary text on Canvas, Surface, and Surface pressed. Use On a
 
 | Role | Family and weight | Size / line height | Use |
 | --- | --- | --- | --- |
-| Display | Instrument Serif Regular | 32 / 36 | Movie/show detail titles, one editorial feature title, profile name |
-| Heading | Instrument Sans Semibold | 24 / 28 | Screen headings and major section headings |
-| Body | Instrument Sans Regular or Semibold | 16 / 24 | Synopsis, review, list title, tabs within a screen, form value, button |
-| Supporting | Instrument Sans Regular or Semibold | 13 / 20 | Metadata, captions, counts, secondary section labels, tab bar text |
+| Display | Gloock Regular | 32 / 36 | Movie/show detail titles, one editorial feature title, profile name |
+| Heading | Noto Sans Semibold | 24 / 28 | Screen headings and major section headings |
+| Body | Noto Sans Regular or Semibold | 16 / 24 | Synopsis, review, list title, tabs within a screen, form value, button |
+| Supporting | Noto Sans Regular or Semibold | 13 / 20 | Metadata, captions, counts, secondary section labels, tab bar text |
 
 Use sentence case. Use regular for reading and semibold for actions and row titles. Use tabular numerals where supported for episode counts, ratings, and dates. Body width is capped at 600 logical units on wide layouts. Use the platform's serif fallback for missing display glyphs and system sans for UI glyphs. Check localized titles and Cyrillic/Kazakh coverage, preserve selectability of copy where appropriate, and keep original titles available.
 

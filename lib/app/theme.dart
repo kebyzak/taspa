@@ -1,20 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'phosphor.dart';
 import '../features/catalog/presentation/artwork.dart';
+import '../features/social/data/social_repository.dart';
 
-const canvasColor = Color(0xff141416);
-const surfaceColor = Color(0xff1d1c1f);
-const pressedColor = Color(0xff2b292d);
-const inkColor = Color(0xfff3eee8);
-const mutedColor = Color(0xffb2aaa8);
-const hairlineColor = Color(0xff39363b);
-const coralColor = Color(0xffdb806f);
-const onCoralColor = Color(0xff1c1414);
-const selectedColor = Color(0xff382725);
+const canvasColor = Color(0xff12161c);
+const surfaceColor = Color(0xff1c222b);
+const pressedColor = Color(0xff262e39);
+const inkColor = Color(0xffedf1f5);
+const mutedColor = Color(0xff9aa4b0);
+const hairlineColor = Color(0xff2e3640);
+const coralColor = Color(0xff7cc4e8);
+const onCoralColor = Color(0xff0e1a22);
+const selectedColor = Color(0xff1d3240);
 
-const _sans = 'Instrument Sans';
+const _sans = 'Noto Sans';
 const _label = TextStyle(
   fontFamily: _sans,
   fontSize: 15,
@@ -49,7 +51,7 @@ ThemeData taspaTheme() {
     surfaceContainerHighest: pressedColor,
     onSurface: inkColor,
     onSurfaceVariant: mutedColor,
-    outline: Color(0xff82797e),
+    outline: Color(0xff7f8895),
     outlineVariant: hairlineColor,
     error: Color(0xffffaaa7),
   );
@@ -212,7 +214,7 @@ ThemeData taspaTheme() {
     ),
     progressIndicatorTheme: const ProgressIndicatorThemeData(
       color: coralColor,
-      linearTrackColor: Color(0xff49434a),
+      linearTrackColor: Color(0xff3a4350),
       linearMinHeight: 4,
       borderRadius: BorderRadius.all(Radius.circular(2)),
     ),
@@ -233,7 +235,7 @@ ThemeData taspaTheme() {
   return theme.copyWith(
     textTheme: theme.textTheme.copyWith(
       displaySmall: const TextStyle(
-        fontFamily: 'Instrument Serif',
+        fontFamily: 'Gloock',
         fontSize: 32,
         height: 1.125,
         color: inkColor,
@@ -478,29 +480,49 @@ class ActionTile extends StatelessWidget {
 }
 
 class Avatar extends StatelessWidget {
-  const Avatar(this.handle, {super.key, this.size = 32});
+  const Avatar(this.handle, {super.key, this.size = 32, this.userId});
 
   final String handle;
   final double size;
+  final String? userId;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    alignment: Alignment.center,
-    decoration: const BoxDecoration(
-      shape: BoxShape.circle,
-      color: selectedColor,
-    ),
-    child: Text(
-      handle.isEmpty ? '?' : handle[0].toUpperCase(),
-      style: TextStyle(
-        fontFamily: 'Instrument Serif',
-        fontSize: size * .5,
-        color: coralColor,
+  Widget build(BuildContext context) {
+    final initials = Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: selectedColor,
       ),
-    ),
-  );
+      child: Text(
+        handle.isEmpty ? '?' : handle[0].toUpperCase(),
+        style: TextStyle(
+          fontFamily: 'Gloock',
+          fontSize: size * .5,
+          color: coralColor,
+        ),
+      ),
+    );
+    final id = userId;
+    if (id == null) return initials;
+    return ClipOval(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Image.network(
+          avatarUrl(id),
+          headers: context.read<SocialRepository>().avatarHeaders,
+          fit: BoxFit.cover,
+          excludeFromSemantics: true,
+          frameBuilder: (context, child, frame, sync) =>
+              frame == null ? initials : child,
+          errorBuilder: (_, _, _) => initials,
+        ),
+      ),
+    );
+  }
 }
 
 String scoreText(num score) =>
@@ -508,6 +530,7 @@ String scoreText(num score) =>
 
 class ScoreBadge extends StatelessWidget {
   const ScoreBadge(this.score, {super.key, this.corner = false});
+
   final num score;
   final bool corner;
 
@@ -669,4 +692,29 @@ class EmptyState extends StatelessWidget {
       ],
     ),
   );
+}
+
+const _monthNames = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+String readableDate(DateTime value) {
+  final day = '${_monthNames[value.month - 1]} ${value.day}';
+  return value.year == DateTime.now().year ? day : '$day, ${value.year}';
+}
+
+String readableDay(String day) {
+  final value = DateTime.tryParse(day);
+  return value == null ? day : readableDate(value);
 }

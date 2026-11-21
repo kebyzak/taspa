@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -83,16 +82,13 @@ class _MustImportPageState extends State<MustImportPage> {
       if (mounted) {
         setState(
           () => _error =
-              (_messages[failure.code] ??
-                  'Could not start the import. Try again.') +
-              (kDebugMode ? '\n[${failure.code}]' : ''),
+              '${_messages[failure.code] ?? 'Could not start the import. Try again.'}),',
         );
       }
-    } on Exception catch (error) {
+    } on Exception catch (_) {
       if (mounted) {
         setState(
-          () => _error =
-              'Could not start the import. Check your connection.${kDebugMode ? '\n[$error]' : ''}',
+          () => _error = 'Could not start the import. Check your connection.}',
         );
       }
     } finally {

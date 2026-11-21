@@ -13,7 +13,7 @@ import '../../auth/auth_cubit.dart';
 import '../../catalog/presentation/artwork.dart';
 import '../data/social_repository.dart';
 
-const _track = Color(0xff49434a);
+const _track = Color(0xff3a4350);
 const _tabular = [ui.FontFeature.tabularFigures()];
 const _months = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 const _weekdays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -41,8 +41,6 @@ const _monthNames = [
   'Dec',
 ];
 
-/// A watch period: [from, to) as calendar days; both null means all time.
-/// Calendar days are UTC midnights so day arithmetic never crosses a DST shift.
 typedef _Period = ({String label, String scope, DateTime? from, DateTime? to});
 
 List<_Period> _periods(DateTime now) => [
@@ -68,12 +66,14 @@ List<_Period> _periods(DateTime now) => [
 ];
 
 String _day(DateTime value) => value.toIso8601String().substring(0, 10);
+
 String _hours(num minutes) => '${(minutes / 60).round()} h';
+
 int _int(Object? value) => (value as num?)?.toInt() ?? 0;
 
-/// Watch statistics for a profile: time, rhythm, taste and shows, plus a shareable recap.
 class InsightsPage extends StatefulWidget {
   const InsightsPage({super.key, required this.id});
+
   final String id;
 
   @override
@@ -173,7 +173,6 @@ class _InsightsPageState extends State<InsightsPage> {
   }
 }
 
-/// Client-side derivations from the per-day rows the RPC returns.
 class _Stats {
   _Stats(this.raw, this.period, this.now)
     : days = {
@@ -188,7 +187,6 @@ class _Stats {
 
   DateTime get today => DateTime.utc(now.year, now.month, now.day);
 
-  /// Last day the period can show, never in the future.
   DateTime get lastDay {
     final to = period.to;
     if (to == null) return today;
@@ -196,7 +194,6 @@ class _Stats {
     return end.isAfter(today) ? today : end;
   }
 
-  /// (label, movie minutes, episode minutes) per bucket: days of a month, months of a year, or years.
   List<(String, int, int)> timeline() {
     final from = period.from;
     final buckets = <(String, int, int)>[];
@@ -231,7 +228,6 @@ class _Stats {
     return buckets;
   }
 
-  /// Weeks (Monday first) of activity levels 0–4 ending at [lastDay], at most 26 weeks.
   List<List<int?>> heatmap() {
     final end = lastDay;
     var start = end.subtract(const Duration(days: 26 * 7 - 1));
@@ -294,7 +290,6 @@ class _Stats {
       }
       previous = day;
     }
-    // A streak is current if it reaches today or yesterday.
     final current = previous != null && today.difference(previous).inDays <= 1
         ? run
         : 0;
@@ -323,6 +318,7 @@ String _date(DateTime value) => '${_monthNames[value.month - 1]} ${value.day}';
 
 class _Insights extends StatelessWidget {
   const _Insights({required this.data, required this.own});
+
   final _Stats data;
   final bool own;
 
@@ -373,7 +369,7 @@ class _Insights extends StatelessWidget {
                 Text(
                   _hours(minutes),
                   style: const TextStyle(
-                    fontFamily: 'Instrument Serif',
+                    fontFamily: 'Gloock',
                     fontSize: 64,
                     height: 1,
                     fontFeatures: _tabular,
@@ -602,6 +598,7 @@ class _Insights extends StatelessWidget {
 
 class _Card extends StatelessWidget {
   const _Card({required this.child});
+
   final Widget child;
 
   @override
@@ -617,6 +614,7 @@ class _Card extends StatelessWidget {
 
 class _Section extends StatelessWidget {
   const _Section({required this.title, this.trailing, required this.child});
+
   final String title;
   final String? trailing;
   final Widget child;
@@ -656,6 +654,7 @@ class _Section extends StatelessWidget {
 
 class _Split extends StatelessWidget {
   const _Split({required this.movies, required this.episodes});
+
   final int movies;
   final int episodes;
 
@@ -695,6 +694,7 @@ class _Legend extends StatelessWidget {
     required this.value,
     required this.detail,
   });
+
   final Color color;
   final String label;
   final String value;
@@ -737,6 +737,7 @@ class _Legend extends StatelessWidget {
 
 class _Dot extends StatelessWidget {
   const _Dot(this.color);
+
   final Color color;
 
   @override
@@ -752,6 +753,7 @@ class _Dot extends StatelessWidget {
 
 class _Grid extends StatelessWidget {
   const _Grid({required this.tiles});
+
   final List<(String, String, String)> tiles;
 
   @override
@@ -800,9 +802,9 @@ class _Grid extends StatelessWidget {
   );
 }
 
-/// Movie minutes (coral) under episode minutes (ivory) per bucket, in hours.
 class _StackedBars extends StatelessWidget {
   const _StackedBars(this.buckets);
+
   final List<(String, int, int)> buckets;
 
   @override
@@ -912,15 +914,16 @@ class _StackedBars extends StatelessWidget {
 }
 
 const _heat = [
-  Color(0xff242226),
-  Color(0xff4a2f2b),
-  Color(0xff7a4a41),
-  Color(0xffae6658),
+  Color(0xff1f2630),
+  Color(0xff1f3a4a),
+  Color(0xff2f6280),
+  Color(0xff5296bc),
   coralColor,
 ];
 
 class _Heatmap extends StatelessWidget {
   const _Heatmap(this.weeks);
+
   final List<List<int?>> weeks;
 
   @override
@@ -990,7 +993,6 @@ class _Heatmap extends StatelessWidget {
   );
 }
 
-/// Simple column chart; the tallest column is coral, the rest neutral.
 class _Columns extends StatelessWidget {
   const _Columns({
     required this.values,
@@ -998,6 +1000,7 @@ class _Columns extends StatelessWidget {
     required this.semantics,
     this.height = 96,
   });
+
   final List<int> values;
   final List<String> labels;
   final String semantics;
@@ -1087,6 +1090,7 @@ class _Meter extends StatelessWidget {
     required this.detail,
     required this.highlight,
   });
+
   final String label;
   final int value;
   final int max;
@@ -1143,6 +1147,7 @@ class _TitleRow extends StatelessWidget {
     this.progress,
     this.highlight = false,
   });
+
   final SocialRow row;
   final String subtitle;
   final Widget? trailing;
@@ -1202,6 +1207,7 @@ class _TitleRow extends StatelessWidget {
 
 class _Delta extends StatelessWidget {
   const _Delta(this.value);
+
   final num value;
 
   @override
@@ -1218,7 +1224,7 @@ class _Delta extends StatelessWidget {
       style: TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w600,
-        color: value > 0 ? const Color(0xfff1ae9f) : inkColor,
+        color: value > 0 ? const Color(0xffb5def2) : inkColor,
         fontFeatures: _tabular,
       ),
     ),
@@ -1227,6 +1233,7 @@ class _Delta extends StatelessWidget {
 
 class _People extends StatefulWidget {
   const _People({required this.actors, required this.creators});
+
   final List<SocialRow> actors;
   final List<SocialRow> creators;
 
@@ -1315,13 +1322,14 @@ class _PeopleState extends State<_People> {
 
 class _ShowStatus extends StatelessWidget {
   const _ShowStatus({required this.status, required this.droppedAfter});
+
   final Map<String, Object?> status;
   final num? droppedAfter;
 
   static const _segments = [
     ('completed', 'Completed', coralColor),
     ('watching', 'Watching', inkColor),
-    ('on_hold', 'On hold', Color(0xff82797e)),
+    ('on_hold', 'On hold', Color(0xff7f8895)),
     ('dropped', 'Dropped', _track),
   ];
 
@@ -1353,7 +1361,7 @@ class _ShowStatus extends StatelessWidget {
                         Text(
                           '$total',
                           style: const TextStyle(
-                            fontFamily: 'Instrument Serif',
+                            fontFamily: 'Gloock',
                             fontSize: 40,
                             height: 1,
                           ),
@@ -1417,6 +1425,7 @@ class _ShowStatus extends StatelessWidget {
 
 class _Donut extends CustomPainter {
   _Donut(this.segments);
+
   final List<(int, Color)> segments;
 
   @override
@@ -1449,9 +1458,9 @@ class _Donut extends CustomPainter {
   bool shouldRepaint(_Donut old) => old.segments != segments;
 }
 
-/// A 9:16 story card of the period, shared as a PNG.
 class _Recap extends StatefulWidget {
   const _Recap({required this.data, required this.streak});
+
   final _Stats data;
   final int streak;
 
@@ -1468,7 +1477,6 @@ class _RecapState extends State<_Recap> {
     try {
       final boundary =
           _card.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      // 360×640 logical → 1080×1920, the story size.
       final image = await boundary.toImage(pixelRatio: 3);
       final png = await image.toByteData(format: ui.ImageByteFormat.png);
       image.dispose();
@@ -1480,8 +1488,7 @@ class _RecapState extends State<_Recap> {
           fileNameOverrides: ['taspa-recap.png'],
         ),
       );
-    } on Object catch (error, stack) {
-      debugPrint('Recap share failed: $error\n$stack');
+    } on Object catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not share. Try again.')),
@@ -1519,7 +1526,7 @@ class _RecapState extends State<_Recap> {
           Text(
             '${(_int(raw['minutes']) / 60).round()} hours',
             style: const TextStyle(
-              fontFamily: 'Instrument Serif',
+              fontFamily: 'Gloock',
               fontSize: 72,
               height: 1,
               color: inkColor,
@@ -1592,6 +1599,7 @@ class _RecapState extends State<_Recap> {
 
 class _RecapLine extends StatelessWidget {
   const _RecapLine(this.label, this.value);
+
   final String label;
   final String value;
 

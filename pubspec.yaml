@@ -25,6 +25,7 @@ dependencies:
   uuid: 4.6.0
   file_picker: 13.4.0
   share_plus: 13.3.1
+  material_ui: ^1.11.1
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -34,17 +35,23 @@ flutter:
   uses-material-design: true
   assets:
     - assets/brand/wordmark_ivory.svg
-    - assets/fonts/InstrumentSans-OFL.txt
-    - assets/fonts/InstrumentSerif-OFL.txt
+    - assets/brand/tomato.svg
+    - assets/fonts/NotoSans-OFL.txt
+    - assets/fonts/Gloock-OFL.txt
     - assets/fonts/Phosphor-LICENSE.txt
   fonts:
-    - family: Instrument Sans
+    - family: Noto Sans
       fonts:
-        - asset: assets/fonts/InstrumentSans.ttf
-    - family: Instrument Serif
+        - asset: assets/fonts/NotoSans-Regular.ttf
+        - asset: assets/fonts/NotoSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/NotoSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/NotoSans-Bold.ttf
+          weight: 700
+    - family: Gloock
       fonts:
-        - asset: assets/fonts/InstrumentSerif-Regular.ttf
-    # Phosphor icon fonts (MIT); see lib/app/phosphor.dart.
+        - asset: assets/fonts/Gloock-Regular.ttf
     - family: PhosphorRegular
       fonts:
         - asset: assets/fonts/Phosphor-Regular.ttf

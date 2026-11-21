@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/painting.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -16,6 +17,9 @@ class ImportFailure implements Exception {
   final String code;
   final int? retryAfter;
 }
+
+String avatarUrl(String userId) =>
+    '$backendUrl/functions/v1/avatar?user=$userId';
 
 class SocialRepository {
   SocialRepository(this.client);
@@ -59,6 +63,8 @@ class SocialRepository {
     if (response.statusCode != 200) {
       throw const FormatException('Avatar update is unavailable.');
     }
+    if (client.auth.currentUser?.id case final id?)
+      unawaited(NetworkImage(avatarUrl(id)).evict());
   }
 
   Future<SocialRow?> importStatus() => one('import_status');

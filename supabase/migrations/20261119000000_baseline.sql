@@ -2375,7 +2375,7 @@ grant execute on function api.viewing_history_v2(uuid,int,date,timestamptz,uuid)
 create function private.followed_activity(before_time timestamptz, before_id uuid, target uuid, opinions_only boolean)
 returns setof jsonb language sql stable security definer set search_path = '' as $$
   select jsonb_build_object('id',a.id,'created_at',a.created_at,'kind',a.kind,'actor_id',a.actor_id,
-    'handle',p.handle,'title_id',t.id,'title',t.display_title,'tmdb_id',t.tmdb_id,'media',t.kind,
+    'handle',p.handle,'title_id',t.id,'title',t.display_title,'tmdb_id',t.tmdb_id,'media',t.kind,'poster',t.poster_path,
     'season',s.display_title,'review',case when a.kind = 'review' then private.review_card(r) end,
     'score',case when a.kind = 'rating' then rating.score end)
   from private.activity a
@@ -2406,9 +2406,44 @@ returns setof jsonb language sql stable security definer set search_path = '' as
   select * from private.followed_activity(before_time,before_id,null,false);
 $$;
 
+-- Following activity on a title page reads the library of the viewer and of each followed person, not the activity log,
+-- so imported and older viewings count too. One row per person (the viewer first): review, else rating, else watched / started.
 create function api.followed_recommendations(target uuid default null)
 returns setof jsonb language sql stable security definer set search_path = '' as $$
-  select * from private.followed_activity(null,null,target,target is null) limit 5;
+  with people as (
+    select (select private.ready_user()) as user_id, true as own
+    union all
+    select f.followed_id, false from private.follows f
+    where f.follower_id = (select private.ready_user()) and f.state = 'accepted'
+  )
+  select x.item from (
+    select jsonb_build_object('id', pe.user_id, 'actor_id', pe.user_id, 'own', pe.own, 'handle', p.handle,
+        'title_id', t.id, 'title', t.display_title, 'tmdb_id', t.tmdb_id, 'media', t.kind, 'poster', t.poster_path,
+        'kind', case when rv.discussion_id is not null then 'review' when rt.score is not null then 'rating'
+          when t.kind = 'show' then 'first_show' else 'first_movie' end,
+        'review', case when rv.discussion_id is not null then private.review_card(rv) end,
+        'score', rt.score) as item,
+      pe.own,
+      greatest(rv.published_at, v.at, sh.tracking_started_at) as at,
+      rv.discussion_id is not null or rt.score is not null or v.n > 0 or sh.show_id is not null as present
+    from people pe
+    join api.profiles p on p.user_id = pe.user_id
+    join private.profile_settings s on s.user_id = pe.user_id
+    join api.titles t on t.id = target and t.catalog_state = 'available'
+    left join lateral (select r.* from private.reviews r
+      where r.user_id = pe.user_id and r.title_id = t.id and r.season_id is null
+        and r.published_at is not null and private.review_visible(r)) rv on true
+    left join private.ratings rt on rt.user_id = pe.user_id and rt.title_id = t.id and rt.season_id is null
+      and rt.score is not null and private.can_see(rt.user_id, rt.audience)
+    left join lateral (select count(*) as n, max(m.logged_at) as at from private.movie_viewings m
+      where m.user_id = pe.user_id and m.movie_id = t.id and m.deleted_at is null
+        and private.can_see(pe.user_id, s.library_audience)) v on true
+    left join private.tracked_shows sh on sh.user_id = pe.user_id and sh.show_id = t.id and sh.intent is not null
+      and private.can_see(pe.user_id, s.library_audience)
+  ) x
+  where x.present
+  order by x.own desc, x.at desc nulls last
+  limit 20;
 $$;
 grant execute on function api.followed_recommendations(uuid) to authenticated;
 
@@ -2840,6 +2875,9 @@ grant execute on function api.import_status() to authenticated;
 
 -- Feed: imported viewings and show starts are hidden; a finished import is one line.
 -- A watched log or show start carries the actor's own rating of that title, when the viewer may see it.
+-- Feed: a rating is not its own entry when the same person logged that title within a day,
+-- because the watched / started card already shows their score. Standalone ratings now show their score
+-- (the watched-card score lookup no longer overwrites it with null).
 create or replace function api.following_feed(before_time timestamptz default null, before_id uuid default null)
 returns setof jsonb language sql stable security definer set search_path = '' as $$
   with me as (select (select private.ready_user()) as id),
@@ -2897,10 +2935,19 @@ returns setof jsonb language sql stable security definer set search_path = '' as
       and private.can_see(a.actor_id, a.audience)
       and case a.kind when 'review' then private.review_visible(r)
         else rating.score is not null and private.can_see(rating.user_id, rating.audience) end
+      -- Same conditions as the watched / first_show rows above, so the score is never hidden from both.
+      and not (a.kind = 'rating' and a.season_id is null
+        and exists (select 1 from people pe where pe.user_id = a.actor_id)
+        and (exists (select 1 from private.movie_viewings v
+               where v.user_id = a.actor_id and v.movie_id = a.title_id and v.deleted_at is null and not v.imported
+                 and v.logged_at between a.created_at - interval '1 day' and a.created_at + interval '1 day')
+          or exists (select 1 from private.tracked_shows sh
+               where sh.user_id = a.actor_id and sh.show_id = a.title_id and sh.intent is not null and not sh.imported
+                 and sh.tracking_started_at between a.created_at - interval '1 day' and a.created_at + interval '1 day')))
   )
   select l.item || jsonb_build_object('handle',p.handle)
     || coalesce(jsonb_build_object('title',t.display_title,'tmdb_id',t.tmdb_id,'media',t.kind,'poster',t.poster_path), '{}'::jsonb)
-    || coalesce(jsonb_build_object('score',own_rating.score), '{}'::jsonb)
+    || jsonb_strip_nulls(jsonb_build_object('score',own_rating.score))
   from logs l
   join api.profiles p on p.user_id = (l.item->>'actor_id')::uuid
   left join api.titles t on t.id = (l.item->>'title_id')::uuid

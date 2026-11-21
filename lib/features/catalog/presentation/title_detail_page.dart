@@ -214,6 +214,18 @@ class _TitleBodyState extends State<_TitleBody> {
     );
   }
 
+  Future<void> _openTrailer(String key) async {
+    final opened = await launchUrl(
+      Uri.https('www.youtube.com', '/watch', {'v': key}),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the trailer.')),
+      );
+    }
+  }
+
   Future<void> _history() async {
     final repo = context.read<LibraryRepository>();
     final selected =
@@ -346,12 +358,52 @@ class _TitleBodyState extends State<_TitleBody> {
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall,
           ),
+        if (title.details['rating'] case final Map<String, dynamic> rating) ...[
+          const SizedBox(height: 8),
+          ExternalRatingChip(rating),
+        ],
       ],
     );
+    final trailer = title.details['trailer'] as String?;
     final poster = SizedBox(
       width: 104,
       height: 156,
-      child: Artwork(title.poster, radius: 12),
+      child: trailer == null
+          ? Artwork(title.poster, radius: 12)
+          : Semantics(
+              button: true,
+              label: 'Watch trailer',
+              excludeSemantics: true,
+              child: GestureDetector(
+                onTap: () => _openTrailer(trailer),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Artwork(title.poster, radius: 12),
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: canvasColor.withValues(alpha: .6),
+                          border: Border.all(
+                            color: inkColor.withValues(alpha: .7),
+                          ),
+                        ),
+                        child: const Icon(
+                          PhosphorIconsFill.play,
+                          size: 12,
+                          color: inkColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
     );
     final top = MediaQuery.paddingOf(context).top + kToolbarHeight;
     if (title.backdrop == null) {
@@ -385,9 +437,9 @@ class _TitleBodyState extends State<_TitleBody> {
                     end: Alignment.bottomCenter,
                     stops: [0, .3, .65, 1],
                     colors: [
-                      Color(0x99141416),
-                      Color(0x00141416),
-                      Color(0x80141416),
+                      Color(0x9912161c),
+                      Color(0x0012161c),
+                      Color(0x8012161c),
                       canvasColor,
                     ],
                   ),
@@ -413,72 +465,50 @@ class _TitleBodyState extends State<_TitleBody> {
 
   Widget _showProgress(String id, TrackingState state) {
     final theme = Theme.of(context);
-    final value = state.released == 0 ? null : state.watched / state.released;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    state.statusLabel!,
-                    style: theme.textTheme.titleLarge,
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  tooltip: 'Change show status',
-                  icon: const Icon(PhosphorIconsRegular.dotsThree),
-                  enabled: !_pending,
-                  onSelected: (value) => _setIntent(id, state, value),
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'watching', child: Text('Watching')),
-                    PopupMenuItem(value: 'on_hold', child: Text('On Hold')),
-                    PopupMenuItem(value: 'dropped', child: Text('Dropped')),
-                  ],
-                ),
+            Expanded(
+              child: Text(
+                state.statusLabel!,
+                style: theme.textTheme.titleMedium,
+              ),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Change show status',
+              icon: const Icon(PhosphorIconsRegular.dotsThree),
+              enabled: !_pending,
+              onSelected: (value) => _setIntent(id, state, value),
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'watching', child: Text('Watching')),
+                PopupMenuItem(value: 'on_hold', child: Text('On Hold')),
+                PopupMenuItem(value: 'dropped', child: Text('Dropped')),
               ],
             ),
-            const SizedBox(height: 12),
-            if (value != null) ...[
-              LinearProgressIndicator(
-                value: value,
-                semanticsLabel: 'Episodes watched',
-                semanticsValue: '${state.watched} of ${state.released}',
-              ),
-              const SizedBox(height: 8),
-            ],
-            Text(
-              '${state.watched} of ${state.released} episodes · ${state.seasonsCompleted} of ${state.seasonsReleased} seasons',
-              style: theme.textTheme.bodySmall,
-            ),
-            if (!state.coverage)
-              Text(
-                'Season metadata is incomplete.',
-                style: theme.textTheme.bodySmall,
-              ),
-            if (state.next case final next?) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Next · S${next.season}E${next.number} ${next.title}',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: coralColor,
-                ),
-              ),
-            ],
-            if (state.next == null && state.upcomingDay != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Next release · ${state.upcomingDay}',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ],
           ],
         ),
-      ),
+        if (state.released > 0)
+          LinearProgressIndicator(
+            value: state.watched / state.released,
+            minHeight: 4,
+            borderRadius: BorderRadius.circular(2),
+            semanticsLabel: 'Episodes watched',
+            semanticsValue: '${state.watched} of ${state.released}',
+          ),
+        const SizedBox(height: 6),
+        Text(
+          [
+            '${state.watched} of ${state.released} episodes',
+            '${state.seasonsCompleted} of ${state.seasonsReleased} seasons',
+            if (state.next == null && state.upcomingDay != null)
+              'Next release ${readableDay(state.upcomingDay!)}',
+            if (!state.coverage) 'Season data incomplete',
+          ].join(' · '),
+          style: theme.textTheme.bodySmall,
+        ),
+      ],
     );
   }
 
@@ -570,6 +600,13 @@ class _TitleBodyState extends State<_TitleBody> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         actions: [
+          if (state != null && state.viewings > 0)
+            IconButton(
+              tooltip:
+                  'Viewing history, ${state.viewings} ${state.viewings == 1 ? 'viewing' : 'viewings'}',
+              icon: const Icon(PhosphorIconsRegular.clockCounterClockwise),
+              onPressed: _history,
+            ),
           if (title.id != null)
             IconButton(
               tooltip: 'Share',
@@ -622,58 +659,17 @@ class _TitleBodyState extends State<_TitleBody> {
                 if (title.overview case final overview?
                     when overview.isNotEmpty)
                   _Overview(overview),
-                if (title.details['trailer'] case final String key)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: ActionChip(
-                      avatar: const Icon(
-                        PhosphorIconsFill.play,
-                        color: coralColor,
-                      ),
-                      label: const Text('Watch trailer'),
-                      onPressed: () async {
-                        final opened = await launchUrl(
-                          Uri.https('www.youtube.com', '/watch', {'v': key}),
-                          mode: LaunchMode.externalApplication,
-                        );
-                        if (!opened && mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Could not open the trailer.'),
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ),
                 if (!isMovie && state != null && state.statusLabel != null) ...[
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 12),
                   _showProgress(title.id!, state),
                 ],
                 if (title.id case final id?)
                   OpinionActions(
                     title: id,
                     label: isMovie ? 'movie' : 'show',
-                    external: title.details['rating'] as Map<String, dynamic>?,
+                    showReviews: false,
+                    tiles: false,
                   ),
-                if (state != null && state.viewings > 0) ...[
-                  const SizedBox(height: 16),
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(
-                        PhosphorIconsRegular.clockCounterClockwise,
-                      ),
-                      title: const Text('Viewing history'),
-                      subtitle: Text(
-                        '${state.viewings} ${state.viewings == 1 ? 'viewing' : 'viewings'}',
-                      ),
-                      trailing: const Icon(PhosphorIconsRegular.caretRight),
-                      onTap: _history,
-                    ),
-                  ),
-                ],
-                if (title.id case final id?)
-                  FollowedRecommendations(titleId: id),
                 if (!isMovie && title.id != null)
                   ShowSeasons(
                     show: title,
@@ -686,10 +682,10 @@ class _TitleBodyState extends State<_TitleBody> {
             ),
           ),
           if (people.isNotEmpty) ...[
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             const SectionHeader('Cast and crew'),
             SizedBox(
-              height: 148,
+              height: 136,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -702,8 +698,13 @@ class _TitleBodyState extends State<_TitleBody> {
               ),
             ),
           ],
+          if (title.id case final id?)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TitleReviews(title: id),
+            ),
           if (similar.isNotEmpty) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             const SectionHeader('Similar titles'),
             Shelf(
               children: [
@@ -812,7 +813,7 @@ class _OverviewState extends State<_Overview> {
           style: const TextStyle(
             fontSize: 15,
             height: 1.5,
-            color: Color(0xffd9d2cc),
+            color: Color(0xffd5dce4),
           ),
         ),
         if (!_open && widget.text.length > 220)
@@ -885,7 +886,9 @@ class _ViewingHistoryState extends State<_ViewingHistory> {
           ),
           for (final entry in _items)
             ListTile(
-              title: Text(entry.day ?? 'Date unknown'),
+              title: Text(
+                entry.day == null ? 'Date unknown' : readableDay(entry.day!),
+              ),
               trailing: PopupMenuButton<String>(
                 tooltip: 'Viewing actions',
                 icon: const Icon(PhosphorIconsRegular.dotsThree),

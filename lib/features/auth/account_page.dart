@@ -45,7 +45,6 @@ class _AccountPageState extends State<AccountPage> {
     final email = _email.text.trim();
     final phase = account.state.phase;
     final guest = phase == AccountPhase.guest;
-    // Catch empty fields here so the user gets a plain hint instead of a server error.
     final missing = switch (phase) {
       AccountPhase.needsHandle when _handle.text.trim().isEmpty =>
         'Enter a handle.',

@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/phosphor.dart';
+import '../../app/theme.dart';
 import '../auth/auth_cubit.dart';
 import '../catalog/data/catalog_repository.dart';
 import 'notifications.dart';
@@ -206,7 +207,7 @@ class _InboxPageState extends State<InboxPage> {
                         subtitle: Text(
                           [
                             if (!item.read) 'Unread',
-                            MaterialLocalizations.of(context).formatShortDate(
+                            readableDate(
                               DateTime.parse(item.eventAt).toLocal(),
                             ),
                           ].join(' · '),
@@ -317,7 +318,7 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
               ),
               if (AndroidPush.supported)
                 SwitchListTile(
-                  title: const Text('Push on Android'),
+                  title: const Text('Push'),
                   value: values[category]!.push,
                   onChanged: _saving || !values[category]!.inbox
                       ? null

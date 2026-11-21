@@ -10,7 +10,6 @@ import '../../../app/theme.dart';
 import '../../auth/auth_cubit.dart';
 import '../../library/data/library_repository.dart';
 import '../../library/presentation/tracking_cubit.dart';
-import '../../social/presentation/reviews.dart';
 import '../data/catalog_repository.dart';
 import 'artwork.dart';
 import 'catalog_cubit.dart';
@@ -83,10 +82,6 @@ class DiscoverPage extends StatelessWidget {
                 ),
               ),
               if (ready) const _ForYou(),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
-                child: FollowedRecommendations(),
-              ),
               const SizedBox(height: 24),
             ],
           );
@@ -408,32 +403,46 @@ class _SearchSheetState extends State<_SearchSheet> {
                   done.contains('want')
                       ? PhosphorIconsFill.bookmarkSimple
                       : PhosphorIconsRegular.bookmarkSimple,
-                  color: done.contains('want') ? coralColor : null,
+                  size: 20,
+                  color: done.contains('want') ? coralColor : mutedColor,
                 ),
               ),
-            if (!upcoming)
-              IconButton.filledTonal(
-                tooltip: done.contains(primary)
-                    ? (movie ? 'Marked watched' : 'Tracking')
-                    : (movie
-                          ? 'Mark ${item.name} watched'
-                          : 'Start watching ${item.name}'),
-                onPressed: busy || done.contains(primary)
-                    ? null
-                    : () => _quick(item, primary),
+            if (!upcoming && done.contains(primary))
+              Semantics(
+                label: movie ? 'Marked watched' : 'Tracking',
+                child: const SizedBox(
+                  width: 48,
+                  child: Icon(
+                    PhosphorIconsBold.check,
+                    size: 16,
+                    color: mutedColor,
+                  ),
+                ),
+              )
+            else if (!upcoming)
+              IconButton.outlined(
+                tooltip: movie
+                    ? 'Mark ${item.name} watched'
+                    : 'Start watching ${item.name}',
+                onPressed: busy ? null : () => _quick(item, primary),
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(32, 32),
+                  fixedSize: const Size(32, 32),
+                  padding: EdgeInsets.zero,
+                  side: const BorderSide(color: coralColor),
+                ),
                 icon: busy
                     ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 1.5),
                       )
                     : Icon(
-                        done.contains(primary)
-                            ? PhosphorIconsFill.checkCircle
-                            : movie
-                            ? PhosphorIconsBold.check
-                            : PhosphorIconsBold.plus,
-                        color: done.contains(primary) ? coralColor : null,
+                        movie
+                            ? PhosphorIconsRegular.check
+                            : PhosphorIconsRegular.plus,
+                        size: 12,
+                        color: coralColor,
                       ),
               ),
           ],
@@ -966,10 +975,13 @@ class CatalogPersonAvatar extends StatelessWidget {
         SizedBox(
           width: 72,
           height: 72,
-          child: Artwork(
-            person.portrait,
-            radius: 36,
-            icon: PhosphorIconsRegular.user,
+          child: ClipOval(
+            clipBehavior: Clip.antiAliasWithSaveLayer,
+            child: Artwork(
+              person.portrait,
+              radius: 36,
+              icon: PhosphorIconsRegular.user,
+            ),
           ),
         ),
         const SizedBox(height: 8),

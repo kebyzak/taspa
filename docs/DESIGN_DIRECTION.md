@@ -9,7 +9,7 @@ Taspa is a cinematic diary with the immediacy of a native mobile app. Film artwo
 ## Visual foundation
 
 - **Let the art set the tone.** Use vivid, rights-cleared posters at their original proportions and carefully framed stills. Reserve full-width artwork for detail pages. In Discover, smaller editorial crops give horizontal poster collections room to appear early.
-- **Use serif for signature content.** Instrument Serif belongs on cinematic detail titles, the occasional featured title, and a profile's display name. Instrument Sans handles navigation, section headings, metadata, reviews, numbers, and actions.
+- **Use serif for signature content.** Gloock belongs on cinematic detail titles, the occasional featured title, and a profile's display name. Noto Sans handles navigation, section headings, metadata, reviews, numbers, and actions.
 - **Group by spacing.** Keep interfaces mostly flat on graphite. Use slightly raised opaque surfaces for sheets, the tab bar, and primary action docks. Reserve hairlines for boundaries that aid orientation. Use consistent 8, 12, 16 and 24 pt corners.
 - **Use coral to signal an action or state.** Fired coral `#DB806F` marks a primary action, selected indicator, progress fill, or liked heart. Supporting controls use ivory and neutral surfaces. Every important state has a label, glyph, or shape independent of color.
 - **Design for one-handed use.** Keep high-frequency tracking actions in the lower reach zone or beside the relevant title. Prefer system navigation and sheets. Keep text and essential controls on solid surfaces. Full-bleed imagery, clean cuts, and typographic hierarchy provide depth.

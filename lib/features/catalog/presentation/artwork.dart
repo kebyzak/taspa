@@ -11,6 +11,7 @@ class Artwork extends StatelessWidget {
     this.radius = 8,
     this.icon = PhosphorIconsRegular.filmSlate,
   });
+
   final String? path;
   final bool backdrop;
   final double radius;
@@ -36,6 +37,10 @@ class Artwork extends StatelessWidget {
                   ? child
                   : AnimatedSwitcher(
                       duration: const Duration(milliseconds: 180),
+                      layoutBuilder: (current, previous) => Stack(
+                        fit: StackFit.expand,
+                        children: [...previous, ?current],
+                      ),
                       child: frame != null ? child : placeholder,
                     ),
               errorBuilder: (context, error, stack) => placeholder,

@@ -352,7 +352,6 @@ class CatalogRepository {
         released: row['released'] as bool,
         releaseDay: row['release_day'] as String?,
         watched: watching ?? row['watched'] as bool,
-        // No chosen date: show the day it was ticked (today while the tick is still pending).
         watchedOn: individual || inBatch
             ? (payload?['watched_on'] as String? ??
                   (watching == true ? _today() : null))

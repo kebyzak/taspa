@@ -8,7 +8,6 @@ import 'core/backend_config.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Draw under the status bar so backdrops reach the top edge instead of stopping at a dark strip.
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   try {
     await initializeBackend();
