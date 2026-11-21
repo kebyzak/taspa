@@ -2838,6 +2838,38 @@ begin
     on conflict (user_id, title_id, season_id) do nothing;
   end if;
 
+  -- Must rates and reviews seasons; each lands on the show's season with the same number,
+  -- or for seasons Must names otherwise ("Book One: ..."), the one released on the same day (±2).
+  if t.kind = 'show' and jsonb_typeof(d->'seasons') = 'array' then
+    insert into private.ratings (user_id, title_id, season_id, score, audience, revision)
+    select actor, t.id, m.id, x.score, audience, 1
+    from (select case when jsonb_typeof(e->'number') = 'number' then (e->>'number')::int end as number,
+            case when jsonb_typeof(e->'released') = 'string' then (e->>'released')::date end as released,
+            round(case when (e->>'rate')::numeric > 10 then (e->>'rate')::numeric / 10 else (e->>'rate')::numeric end) as score
+          from jsonb_array_elements(d->'seasons') e
+          where jsonb_typeof(e->'rate') = 'number') x
+    cross join lateral (select s.id from api.seasons s
+      where s.show_id = t.id and s.available and s.season_number > 0
+        and (s.season_number = x.number or (x.number is null and abs(s.first_release_day - x.released) <= 2))
+      order by abs(coalesce(s.first_release_day - x.released, 0)) limit 1) m
+    where x.score between 1 and 10
+    on conflict (user_id, title_id, season_id) do nothing;
+
+    insert into private.reviews (user_id, title_id, season_id, discussion_id, body, audience, published_at, revision)
+    select actor, t.id, m.id, case when audience <> 'only_me' then gen_random_uuid() end, x.body, audience,
+      case when audience <> 'only_me' then at end, 1
+    from (select case when jsonb_typeof(e->'number') = 'number' then (e->>'number')::int end as number,
+            case when jsonb_typeof(e->'released') = 'string' then (e->>'released')::date end as released,
+            nullif(btrim(left(e->>'review', 5000)), '') as body
+          from jsonb_array_elements(d->'seasons') e) x
+    cross join lateral (select s.id from api.seasons s
+      where s.show_id = t.id and s.available and s.season_number > 0
+        and (s.season_number = x.number or (x.number is null and abs(s.first_release_day - x.released) <= 2))
+      order by abs(coalesce(s.first_release_day - x.released, 0)) limit 1) m
+    where x.body is not null
+    on conflict (user_id, title_id, season_id) do nothing;
+  end if;
+
   update private.import_items set state = 'done' where job_id = job and must_id = item;
   update private.import_jobs set done = done + 1, imported = imported + 1 where id = job;
 end $$;
@@ -3095,6 +3127,18 @@ language sql stable security definer set search_path = '' as $$
   from me join api.titles t on t.tmdb_id = any(tmdb_ids[1:100]);
 $$;
 grant execute on function api.my_title_marks(bigint[]) to authenticated;
+
+-- Poster badges: the viewer's own whole-title scores for catalog results.
+create or replace function api.my_scores(tmdb_ids bigint[])
+returns table (kind api.media_kind, tmdb_id bigint, score numeric)
+language sql stable security definer set search_path = '' as $$
+  select t.kind, t.tmdb_id, r.score
+  from private.ratings r
+  join api.titles t on t.id = r.title_id
+  where r.user_id = (select private.ready_user()) and r.season_id is null and r.score is not null
+    and t.tmdb_id = any(tmdb_ids[1:100]);
+$$;
+grant execute on function api.my_scores(bigint[]) to authenticated;
 
 -- Notifications say what happened, in the inbox and in the push body.
 create or replace function private.notification_text(n private.notifications) returns text

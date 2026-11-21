@@ -195,7 +195,7 @@ async function externalRating(row: Json): Promise<Json | null> {
       const url = new URL("https://www.omdbapi.com/");
       url.searchParams.set("i", validId);
       url.searchParams.set("apikey", key);
-      const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
       if (response.ok) {
         const data = await body(response);
         const value = Number(data.imdbRating);
@@ -297,7 +297,8 @@ export async function runCatalog(spec: RequestSpec, actor: string): Promise<Cata
     if (spec.operation === "trending" && (spec.shelf !== "trending" || spec.genre)) {
       const day = (offset: number) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
       const date = spec.kind === "movie" ? "primary_release_date" : "first_air_date";
-      url.searchParams.set("sort_by", spec.shelf === "upcoming" ? `${date}.asc` : "popularity.desc");
+      // Upcoming is "most anticipated in the next 90 days": by date it led with obscure titles that have no poster yet.
+      url.searchParams.set("sort_by", "popularity.desc");
       url.searchParams.set("include_adult", "false");
       if (spec.genre) url.searchParams.set("with_genres", String(spec.genre));
       if (spec.shelf === "new" || spec.shelf === "upcoming") {
@@ -320,6 +321,7 @@ export async function runCatalog(spec: RequestSpec, actor: string): Promise<Cata
       const upstream = await body(response);
       let result: Json;
       let hydrated: Json | null = null;
+      let retrySoon = false;
       let showChildren: Json[] | null = null;
       let showTmdb: number | null = null;
       let seasonTmdb: number | null = null;
@@ -330,7 +332,12 @@ export async function runCatalog(spec: RequestSpec, actor: string): Promise<Cata
           ? upstream.genres.map((item) => text(object(item).name, 60)).filter(Boolean)
           : [];
         const releases = spec.kind === "movie" ? regionalReleases(upstream) : undefined;
-        const rating = await externalRating(upstream);
+        const fresh = await externalRating(upstream);
+        const previous = object(object(object(claim.value).details).rating);
+        // An OMDb hiccup (timeout, daily limit) must not swap a known IMDb score for TMDB's.
+        const rating = fresh?.source !== "imdb" && previous.source === "imdb" ? previous : fresh;
+        // A TMDB fallback for a title that has an IMDb id is retried within the hour, not tomorrow.
+        if (rating?.source !== "imdb" && rating?.imdb_id && Deno.env.get("OMDB_API_KEY")) retrySoon = true;
         result = { ...hydrated, genres, details: { ...details(upstream), genres, rating },
           ...(releases ? { regional_releases: releases } : {}) };
         if (spec.kind === "show" && Array.isArray(upstream.seasons) && upstream.seasons.length > 0) {
@@ -362,7 +369,8 @@ export async function runCatalog(spec: RequestSpec, actor: string): Promise<Cata
           const item = object(value);
           const kind = spec.operation === "trending" ? spec.kind :
             item.media_type === "movie" ? "movie" : item.media_type === "tv" ? "show" : null;
-          const title = kind ? normalize(item, kind) : null;
+          // Shelves skip titles without a poster; search keeps them so they can still be found.
+          const title = kind && (spec.operation !== "trending" || item.poster_path) ? normalize(item, kind) : null;
           return title ? [title] : [];
         });
         const end = typeof upstream.total_pages === "number" ? Math.min(10, upstream.total_pages) : spec.page;
@@ -376,7 +384,7 @@ export async function runCatalog(spec: RequestSpec, actor: string): Promise<Cata
       const stored = await rpc(showChildren ? "catalog_finish_show" : "catalog_finish", {
         request_key: key,
         lease: claim.lease,
-        ttl_seconds: spec.operation === "hydrate" || spec.operation === "person" ? 86400 :
+        ttl_seconds: retrySoon ? 3600 : spec.operation === "hydrate" || spec.operation === "person" ? 86400 :
           spec.operation === "hydrate_season" || spec.operation === "trending" ? 7200 : 900,
         result,
         hydrated,

@@ -323,6 +323,7 @@ class PosterCard extends StatelessWidget {
     required this.title,
     this.caption,
     this.score,
+    this.own,
     required this.onTap,
   });
 
@@ -330,10 +331,30 @@ class PosterCard extends StatelessWidget {
   final String title;
   final String? caption;
   final num? score;
+
+  /// (kind, tmdbId) of a catalog title: the viewer's own score is looked up and shown like in the profile.
+  final (String, int)? own;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Semantics(
+  Widget build(BuildContext context) {
+    if (own case (final kind, final tmdbId)? when score == null) {
+      final social = context.read<SocialRepository>()..wantScore(tmdbId);
+      return ValueListenableBuilder(
+        valueListenable: social.myScores,
+        builder: (context, scores, _) => PosterCard(
+          poster: poster,
+          title: title,
+          caption: caption,
+          score: scores['$kind:$tmdbId'],
+          onTap: onTap,
+        ),
+      );
+    }
+    return _card(context);
+  }
+
+  Widget _card(BuildContext context) => Semantics(
     button: true,
     label: [
       title,

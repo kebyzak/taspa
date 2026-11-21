@@ -179,6 +179,7 @@ class _ForYouState extends State<_ForYou> {
                         poster: item.poster,
                         title: item.name,
                         caption: item.caption,
+                        own: (item.kind.name, item.tmdbId),
                         onTap: () => context.push(item.location),
                       ),
                   ],
@@ -236,6 +237,7 @@ class _TrendingShelf extends StatelessWidget {
                         poster: item.poster,
                         title: item.name,
                         caption: item.caption,
+                        own: (item.kind.name, item.tmdbId),
                         onTap: () => context.push(item.location),
                       ),
                   ],
@@ -792,6 +794,7 @@ class _CatalogResultsPageState extends State<CatalogResultsPage> {
                             poster: item.poster,
                             title: item.name,
                             caption: item.caption,
+                            own: (item.kind.name, item.tmdbId),
                             onTap: () => context.push(item.location),
                           );
                         },
@@ -1094,6 +1097,7 @@ class _FilmographyPageState extends State<FilmographyPage> {
                     poster: title.poster,
                     title: title.name,
                     caption: title.caption,
+                    own: (title.kind.name, title.tmdbId),
                     onTap: () => context.push(title.location),
                   );
                 },

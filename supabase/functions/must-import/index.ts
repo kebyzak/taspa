@@ -104,6 +104,7 @@ async function readMust(username: string): Promise<Json[]> {
       });
     }
     if (!Array.isArray(products)) throw new ImportError(502, "must_unavailable");
+    const seasonsByShow = await readSeasons(profile.id, token, products);
     for (const value of products) {
       const product = object(object(value).product);
       const info = object(object(value).user_product_info);
@@ -112,13 +113,16 @@ async function readMust(username: string): Promise<Json[]> {
       if (typeof id !== "number" || !kind || typeof product.title !== "string") continue;
       const year = typeof product.release_date === "string" ? Number(product.release_date.slice(0, 4)) : NaN;
       const episodes = object(info.user_show_info).episodes_watched;
+      const seasons = seasonsByShow.get(id);
       items.push({
         must_id: id,
         kind,
         title: product.title.slice(0, 300),
         year: Number.isInteger(year) && year > 1800 ? year : null,
         lists: membership.get(id) ?? [],
-        rate: typeof info.rate === "number" ? info.rate : null,
+        // Must rates seasons, not shows; a show without its own rate takes its last watched season's.
+        rate: typeof info.rate === "number" ? info.rate : seasons?.lastRate ?? null,
+        ...(seasons?.list.length ? { seasons: seasons.list } : {}),
         modified_at: typeof info.modified_at === "string" && !Number.isNaN(Date.parse(info.modified_at)) ? info.modified_at : null,
         episodes: typeof episodes === "number" && Number.isSafeInteger(episodes) && episodes > 0 ? episodes : 0,
         review: reviewById.get(id) ?? null,
@@ -126,6 +130,60 @@ async function readMust(username: string): Promise<Json[]> {
     }
   }
   return items;
+}
+
+/**
+ * Season ratings and reviews of the shows in one products batch. Must keeps them on season products,
+ * listed per show by /shows/watched_stats (watched_seasons, last one = last_season_rate).
+ * Season products have no number field, only the title "Season N" (requested in English); seasons named
+ * otherwise ("Book One: Survival") carry their release date, which the database matches to the season instead.
+ */
+async function readSeasons(
+  user: unknown,
+  token: string,
+  products: unknown[],
+): Promise<Map<number, { lastRate: number | null; list: Json[] }>> {
+  const result = new Map<number, { lastRate: number | null; list: Json[] }>();
+  const showIds = products.map((value) => object(object(value).product))
+    .filter((product) => product.type === "show" && typeof product.id === "number")
+    .map((product) => product.id as number);
+  if (showIds.length === 0) return result;
+  const stats = await must(`/users/id/${user}/shows/watched_stats`, token, { ids: showIds }).catch(() => []);
+  if (!Array.isArray(stats)) return result;
+  const seasonShow = new Map<number, number>();
+  for (const value of stats) {
+    const row = object(value);
+    if (typeof row.product_id !== "number") continue;
+    const watched = Array.isArray(row.watched_seasons) ? row.watched_seasons.filter(Number.isSafeInteger) as number[] : [];
+    watched.forEach((season) => seasonShow.set(season, row.product_id as number));
+    result.set(row.product_id, {
+      lastRate: typeof row.last_season_rate === "number" ? row.last_season_rate : null,
+      list: [],
+    });
+  }
+  const seasonIds = [...seasonShow.keys()];
+  for (let start = 0; start < seasonIds.length; start += 100) {
+    const rows = await must(`/users/id/${user}/products?embed=product,review`, token, { ids: seasonIds.slice(start, start + 100) })
+      .catch(() => []);
+    if (!Array.isArray(rows)) continue;
+    for (const value of rows) {
+      const product = object(object(value).product);
+      const info = object(object(value).user_product_info);
+      const show = typeof product.id === "number" ? seasonShow.get(product.id) : undefined;
+      if (show === undefined) continue;
+      // Season products carry no number field, only a title like "Season 1" (checked against a live response).
+      const number = Number(/^Season (\d+)$/.exec(String(product.title ?? ""))?.[1]);
+      const body = object(info.review).body;
+      const review = typeof body === "string" && body.trim() ? body.trim().slice(0, 5000) : null;
+      const rate = typeof info.rate === "number" ? info.rate : null;
+      const released = typeof product.release_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(product.release_date)
+        ? product.release_date : null;
+      const numbered = Number.isSafeInteger(number) && number >= 1;
+      if ((!numbered && !released) || (rate === null && !review)) continue;
+      result.get(show)?.list.push({ number: numbered ? number : null, released, rate, review });
+    }
+  }
+  return result;
 }
 
 /** Finds the TMDB id for a Must title by name and year. */

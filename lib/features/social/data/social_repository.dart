@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:http/http.dart' as http;
 
@@ -42,7 +43,51 @@ class SocialRepository {
 
   Future<void> change(String name, SocialRow params) async {
     await _api.rpc(name, params: params);
+    if (name == 'set_rating') _forgetScores();
     _changed.add(null);
+  }
+
+  /// The viewer's own title scores by "kind:tmdbId" for poster badges, fetched in batches as posters ask.
+  final myScores = ValueNotifier<Map<String, num>>({});
+  final _askedScores = <int>{};
+  final _wantedScores = <int>{};
+  String? _scoresOwner;
+  Timer? _scoreBatch;
+
+  void _forgetScores() {
+    _askedScores.clear();
+    myScores.value = {};
+  }
+
+  void wantScore(int tmdbId) {
+    final owner = client.auth.currentUser?.id;
+    if (owner == null) return;
+    if (owner != _scoresOwner) {
+      _scoresOwner = owner;
+      _forgetScores();
+    }
+    if (!_askedScores.add(tmdbId)) return;
+    _wantedScores.add(tmdbId);
+    _scoreBatch ??= Timer(Duration.zero, _fetchScores);
+  }
+
+  Future<void> _fetchScores() async {
+    final ids = _wantedScores.toList();
+    _wantedScores.clear();
+    _scoreBatch = null;
+    for (var start = 0; start < ids.length; start += 100) {
+      final chunk = ids.sublist(start, (start + 100).clamp(0, ids.length));
+      try {
+        final rows = await many('my_scores', {'tmdb_ids': chunk});
+        myScores.value = {
+          ...myScores.value,
+          for (final row in rows)
+            '${row['kind']}:${row['tmdb_id']}': row['score'] as num,
+        };
+      } on Exception {
+        _askedScores.removeAll(chunk);
+      }
+    }
   }
 
   Map<String, String> get avatarHeaders => {
