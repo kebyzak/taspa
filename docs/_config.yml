@@ -1,0 +1,3 @@
+# GitHub Pages serves only the public pages, not the internal specs in this folder.
+exclude:
+  - "*.md"
