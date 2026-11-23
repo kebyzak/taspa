@@ -434,12 +434,11 @@ class _Tabs extends StatelessWidget {
               onPressed: () => context.push('/people'),
               icon: const Icon(PhosphorIconsRegular.userPlus),
             ),
-          if (tab == 3)
-            IconButton(
-              tooltip: 'Notifications',
-              onPressed: () => context.push('/notifications'),
-              icon: const Icon(PhosphorIconsRegular.bell),
-            ),
+          if (context.watch<AccountCubit>().state case Account(
+            phase: AccountPhase.ready,
+            :final userId,
+          ))
+            _InboxBell(key: ValueKey(userId)),
           const SizedBox(width: 4),
         ],
       ),
@@ -451,6 +450,61 @@ class _Tabs extends StatelessWidget {
       ),
     );
   }
+}
+
+class _InboxBell extends StatefulWidget {
+  const _InboxBell({super.key});
+
+  @override
+  State<_InboxBell> createState() => _InboxBellState();
+}
+
+class _InboxBellState extends State<_InboxBell> with WidgetsBindingObserver {
+  int _unread = 0;
+  late final StreamSubscription<void> _pushes;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _pushes = context.read<AndroidPush>().changes.listen((_) => _load());
+    _load();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pushes.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final unread = await context.read<InboxRepository>().unread();
+      if (mounted) setState(() => _unread = unread);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: _unread == 0 ? 'Notifications' : 'Notifications, $_unread unread',
+    onPressed: () async {
+      await context.push('/notifications');
+      _load();
+    },
+    icon: Badge.count(
+      count: _unread,
+      isLabelVisible: _unread > 0,
+      backgroundColor: const Color(0xffff3b30),
+      textColor: Colors.white,
+      child: const Icon(PhosphorIconsRegular.bell),
+    ),
+  );
 }
 
 class _TabBar extends StatelessWidget {

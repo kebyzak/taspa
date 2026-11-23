@@ -130,8 +130,8 @@ class _InsightsPageState extends State<InsightsPage> {
           final Widget content;
           if (result.connectionState != ConnectionState.done) {
             content = const Padding(
-              padding: EdgeInsets.only(top: 96),
-              child: Center(child: CircularProgressIndicator()),
+              padding: EdgeInsets.all(16),
+              child: Skeleton(rows: 4, hero: 160),
             );
           } else if (result.hasError) {
             content = EmptyState(

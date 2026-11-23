@@ -472,7 +472,7 @@ class _ShowSeasonsState extends State<ShowSeasons> {
         if (_loading)
           const Padding(
             padding: EdgeInsets.only(top: 8),
-            child: LinearProgressIndicator(),
+            child: Skeleton(rows: 4),
           ),
         if (_failed)
           InlineNotice(

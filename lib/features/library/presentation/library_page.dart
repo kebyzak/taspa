@@ -137,15 +137,29 @@ class _LibraryBodyState extends State<_LibraryBody> {
   final _pending = <String, TrackingCommand>{};
   final _busy = <String>{};
   late final StreamSubscription<void> _changes;
+  bool _stale = false;
+  bool _visible = true;
   List<({TrackingCommand command, bool conflict})> _waiting = [];
 
   @override
   void initState() {
     super.initState();
     _changes = context.read<LibraryRepository>().changes.listen(
-      (_) => unawaited(_load()),
+      (_) => _stale = true,
     );
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible && !_visible && _stale) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_load());
+      });
+    }
+    _visible = visible;
   }
 
   @override
@@ -156,6 +170,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
 
   Future<void> _load({bool append = false}) async {
     final generation = ++_generation;
+    _stale = false;
     setState(() {
       _loading = true;
       _failed = false;
@@ -877,7 +892,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
           if (_loading && _rows.isEmpty)
             const Padding(
               padding: EdgeInsets.only(bottom: 8),
-              child: LinearProgressIndicator(),
+              child: Skeleton(rows: 8, leading: 64),
             ),
           if (_offline)
             const InlineNotice(

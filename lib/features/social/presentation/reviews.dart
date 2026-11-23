@@ -11,6 +11,7 @@ import '../../../app/theme.dart';
 import '../../auth/auth_cubit.dart';
 import '../../../core/backend_config.dart';
 import '../../../core/offline_store.dart';
+import '../../library/data/library_repository.dart';
 import '../data/social_repository.dart';
 
 const audienceLabels = {
@@ -281,6 +282,7 @@ class OpinionActions extends StatefulWidget {
     this.season,
     this.showReviews = true,
     this.tiles = true,
+    this.movie = false,
   });
 
   final String title;
@@ -288,6 +290,7 @@ class OpinionActions extends StatefulWidget {
   final String? season;
   final bool showReviews;
   final bool tiles;
+  final bool movie;
 
   @override
   State<OpinionActions> createState() => _OpinionActionsState();
@@ -305,6 +308,22 @@ class _OpinionActionsState extends State<OpinionActions> {
     _opinion = _load();
     _reviewsVersion++;
   });
+
+  Future<void> _markWatched() async {
+    final library = context.read<LibraryRepository>();
+    try {
+      final state = await library.snapshot(widget.title);
+      if (state.viewings > 0) return;
+      await library.apply(
+        TrackingCommand(widget.title, 'mark_movie_watched', {
+          'viewing_id': const Uuid().v4(),
+          'wanted_revision': state.revision,
+        }),
+      );
+    } on Exception {
+      // The rating is saved; the viewing is a convenience (e.g. unreleased movies are refused).
+    }
+  }
 
   Future<void> _edit(
     SocialRow? value, {
@@ -403,6 +422,9 @@ class _OpinionActionsState extends State<OpinionActions> {
           revision,
           result['share'] as bool,
         );
+        if (widget.movie && result['score'] != null) {
+          await _markWatched();
+        }
       }
     } on Exception {
       if (mounted) {
@@ -1109,7 +1131,7 @@ class _ReviewListPageState extends State<ReviewListPage> {
       children: [
         for (final row in _items)
           ReviewTile(row, showTitle: widget.author != null),
-        if (_loading) const LinearProgressIndicator(),
+        if (_loading) Skeleton(rows: _items.isEmpty ? 5 : 2),
         if (_error) TextButton(onPressed: _load, child: const Text('Retry')),
         if (!_loading && !_error && _items.isEmpty)
           const Text('No reviews to show.'),
@@ -1277,7 +1299,7 @@ class _ReviewDetailPageState extends State<ReviewDetailPage> {
             if (_working)
               const Padding(
                 padding: EdgeInsets.only(bottom: 8),
-                child: LinearProgressIndicator(),
+                child: Skeleton(rows: 3, hero: 120),
               ),
             if (!_working && !_failed && data == null)
               const EmptyState(

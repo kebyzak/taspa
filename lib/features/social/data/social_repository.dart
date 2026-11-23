@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
@@ -47,7 +46,6 @@ class SocialRepository {
     _changed.add(null);
   }
 
-  /// The viewer's own title scores by "kind:tmdbId" for poster badges, fetched in batches as posters ask.
   final myScores = ValueNotifier<Map<String, num>>({});
   final _askedScores = <int>{};
   final _wantedScores = <int>{};
@@ -108,8 +106,9 @@ class SocialRepository {
     if (response.statusCode != 200) {
       throw const FormatException('Avatar update is unavailable.');
     }
-    if (client.auth.currentUser?.id case final id?)
+    if (client.auth.currentUser?.id case final id?) {
       unawaited(NetworkImage(avatarUrl(id)).evict());
+    }
   }
 
   Future<SocialRow?> importStatus() => one('import_status');

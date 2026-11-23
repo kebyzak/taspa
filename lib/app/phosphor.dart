@@ -17,8 +17,8 @@ abstract final class PhosphorIconsRegular {
   static const calendarX = IconData(0xe10c, fontFamily: 'PhosphorRegular');
   static const caretDown = IconData(0xe136, fontFamily: 'PhosphorRegular');
   static const caretRight = IconData(0xe13a, fontFamily: 'PhosphorRegular');
-  static const sortAscending = IconData(0xe444, fontFamily: 'PhosphorRegular');
-  static const sortDescending = IconData(0xe446, fontFamily: 'PhosphorRegular');
+  static const sortAscending = IconData(0xe446, fontFamily: 'PhosphorRegular');
+  static const sortDescending = IconData(0xe444, fontFamily: 'PhosphorRegular');
   static const chatCircle = IconData(0xe168, fontFamily: 'PhosphorRegular');
   static const checkCircle = IconData(0xe184, fontFamily: 'PhosphorRegular');
   static const checks = IconData(0xe53a, fontFamily: 'PhosphorRegular');

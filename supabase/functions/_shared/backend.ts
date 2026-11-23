@@ -48,7 +48,14 @@ export async function signedIn(headers: Record<string, string>): Promise<Json | 
 }
 
 export const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const noCache = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
+// The web app calls these functions cross-origin; without CORS the browser blocks every call.
+export const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+};
+export const preflight = () => new Response(null, { headers: cors });
+export const noCache = { ...cors, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 export function reply(code: string, status: number): Response {
   return Response.json({ code }, { status, headers: noCache });
 }

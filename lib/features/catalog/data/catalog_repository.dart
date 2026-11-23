@@ -166,6 +166,17 @@ class CatalogRepository {
   }
 
   Future<Map<String, dynamic>> _request(Map<String, Object> input) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _send(input);
+      } on CatalogFailure catch (error) {
+        if (attempt == 2 || error.status != 429 && error.status < 500) rethrow;
+      }
+      await Future<void>.delayed(Duration(seconds: 2 << attempt));
+    }
+  }
+
+  Future<Map<String, dynamic>> _send(Map<String, Object> input) async {
     final token = client.auth.currentSession?.accessToken;
     final response = await http
         .post(

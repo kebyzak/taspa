@@ -17,6 +17,10 @@ typedef InboxItem = ({
   String eventAt,
   bool read,
   String? message,
+  String? actorId,
+  String? handle,
+  String? poster,
+  String? title,
 });
 typedef NoticePreference = ({bool inbox, bool push});
 
@@ -24,7 +28,11 @@ class InboxRepository {
   InboxRepository(this.client);
   final SupabaseClient client;
 
-  Future<List<InboxItem>> items({InboxItem? after, String? id}) async {
+  Future<List<InboxItem>> items({
+    InboxItem? after,
+    String? id,
+    bool? people,
+  }) async {
     final rows =
         await client
                 .schema('api')
@@ -34,6 +42,7 @@ class InboxRepository {
                     'before_time': ?after?.eventAt,
                     'before_id': ?after?.id,
                     'item_id': ?id,
+                    'people': ?people,
                   },
                 )
             as List;
@@ -46,6 +55,10 @@ class InboxRepository {
             eventAt: row['event_at'] as String,
             read: row['read_at'] != null,
             message: row['message'] as String?,
+            actorId: row['actor_id'] as String?,
+            handle: row['actor_handle'] as String?,
+            poster: row['poster'] as String?,
+            title: row['title'] as String?,
           ),
         )
         .toList();
@@ -63,6 +76,9 @@ class InboxRepository {
           },
         );
   }
+
+  Future<int> unread() async =>
+      await client.schema('api').rpc('inbox_unread_count') as int;
 
   Future<Map<String, NoticePreference>> preferences() async {
     final row =

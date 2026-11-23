@@ -505,11 +505,7 @@ class _SearchSheetState extends State<_SearchSheet> {
                 onChanged: _changed,
               ),
             ),
-            const SizedBox(height: 4),
-            SizedBox(
-              height: 4,
-              child: state.loading ? const LinearProgressIndicator() : null,
-            ),
+            const SizedBox(height: 8),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -572,6 +568,8 @@ class _SearchSheetState extends State<_SearchSheet> {
                       onAction: () =>
                           context.read<CatalogCubit>().load(query: _query),
                     ),
+                  if (state.loading && page == null && _query != null)
+                    const Skeleton(),
                   if (page case final page? when _query != null) ...[
                     if (page.stale)
                       const InlineNotice(
@@ -753,12 +751,6 @@ class _CatalogResultsPageState extends State<CatalogResultsPage> {
                 ),
               )
             : Text(catalogHeading(widget.kind!, widget.shelf)),
-        bottom: state.loading
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(4),
-                child: LinearProgressIndicator(),
-              )
-            : null,
       ),
       body: SafeArea(
         child: !isSearch
@@ -774,6 +766,13 @@ class _CatalogResultsPageState extends State<CatalogResultsPage> {
                                 'Showing saved results',
                                 icon: PhosphorIconsRegular.cloudSlash,
                               ),
+                      ),
+                    ),
+                  if (state.loading && page == null)
+                    const SliverPadding(
+                      padding: EdgeInsets.all(16),
+                      sliver: SliverToBoxAdapter(
+                        child: Skeleton(rows: 8, leading: 64),
                       ),
                     ),
                   if (page != null)
@@ -844,6 +843,8 @@ class _CatalogResultsPageState extends State<CatalogResultsPage> {
                   ],
                   if (state.failed)
                     _CatalogRetry(onRetry: () => cubit.load(query: _query)),
+                  if (state.loading && page == null && _query != null)
+                    const Skeleton(),
                   if (page case final page? when _query != null) ...[
                     if (page.stale)
                       const InlineNotice(
@@ -1045,7 +1046,10 @@ class _FilmographyPageState extends State<FilmographyPage> {
         }
         final result = snapshot.data;
         if (result == null) {
-          return const Center(child: CircularProgressIndicator());
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: const [Skeleton(hero: 160)],
+          );
         }
         return CustomScrollView(
           slivers: [

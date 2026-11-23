@@ -4,7 +4,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 const backendUrl = String.fromEnvironment('SUPABASE_URL');
 const publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
-const authCallback = 'com.taspa.taspa://auth-callback';
+const _nativeAuthCallback = 'com.taspa.taspa://auth-callback';
+
+String get authCallback =>
+    kIsWeb ? Uri.base.resolve('/').toString() : _nativeAuthCallback;
 
 Future<void> initializeBackend() async {
   final url = Uri.tryParse(backendUrl);
@@ -24,13 +27,13 @@ Future<void> initializeBackend() async {
   await Supabase.initialize(
     url: backendUrl,
     publishableKey: publishableKey,
-    authOptions: FlutterAuthClientOptions(
-      localStorage: kIsWeb
-          ? const EmptyLocalStorage()
-          : const _SessionStorage(),
-      detectSessionInUriPredicate: (uri) =>
-          uri.scheme == 'com.taspa.taspa' && uri.host == 'auth-callback',
-    ),
+    authOptions: kIsWeb
+        ? const FlutterAuthClientOptions()
+        : FlutterAuthClientOptions(
+            localStorage: const _SessionStorage(),
+            detectSessionInUriPredicate: (uri) =>
+                uri.scheme == 'com.taspa.taspa' && uri.host == 'auth-callback',
+          ),
   );
 }
 

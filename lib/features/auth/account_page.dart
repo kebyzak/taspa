@@ -333,7 +333,7 @@ class _AccountPageState extends State<AccountPage> {
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 24),
-          if (phase == AccountPhase.loading) const LinearProgressIndicator(),
+          if (phase == AccountPhase.loading) const Skeleton(rows: 3),
           if (phase == AccountPhase.ready) ...[
             Text('@${account.handle}'),
             const SizedBox(height: 24),

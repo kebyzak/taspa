@@ -55,9 +55,13 @@ class _TitleDetailPageState extends State<TitleDetailPage> {
         }
         return Scaffold(
           appBar: AppBar(),
-          body: Center(
-            child: snapshot.hasError
-                ? Column(
+          body: !snapshot.hasError
+              ? ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: const [Skeleton(rows: 4, hero: 220)],
+                )
+              : Center(
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text('Could not load this title.'),
@@ -68,9 +72,8 @@ class _TitleDetailPageState extends State<TitleDetailPage> {
                         child: const Text('Retry'),
                       ),
                     ],
-                  )
-                : const CircularProgressIndicator(),
-          ),
+                  ),
+                ),
         );
       },
     );
@@ -624,11 +627,6 @@ class _TitleBodyState extends State<_TitleBody> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (_pending)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: LinearProgressIndicator(),
-                  ),
                 if (state?.syncStatus == 'pending')
                   const InlineNotice(
                     'Pending sync',
@@ -667,6 +665,7 @@ class _TitleBodyState extends State<_TitleBody> {
                   OpinionActions(
                     title: id,
                     label: isMovie ? 'movie' : 'show',
+                    movie: isMovie,
                     showReviews: false,
                     tiles: false,
                   ),
@@ -907,7 +906,7 @@ class _ViewingHistoryState extends State<_ViewingHistory> {
                 ],
               ),
             ),
-          if (_loading) const LinearProgressIndicator(),
+          if (_loading) const Skeleton(rows: 2, leading: 28),
           if (_failed) const Text('Could not load viewing history.'),
           if (_more && !_loading)
             TextButton(

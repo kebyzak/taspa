@@ -331,8 +331,6 @@ class PosterCard extends StatelessWidget {
   final String title;
   final String? caption;
   final num? score;
-
-  /// (kind, tmdbId) of a catalog title: the viewer's own score is looked up and shown like in the profile.
   final (String, int)? own;
   final VoidCallback onTap;
 
@@ -735,7 +733,112 @@ String readableDate(DateTime value) {
   return value.year == DateTime.now().year ? day : '$day, ${value.year}';
 }
 
+String timeAgo(String? value) {
+  final at = DateTime.tryParse(value ?? '');
+  if (at == null) return '';
+  final gap = DateTime.now().difference(at.toLocal());
+  if (gap.inMinutes < 1) return 'now';
+  if (gap.inHours < 1) return '${gap.inMinutes}m';
+  if (gap.inDays < 1) return '${gap.inHours}h';
+  if (gap.inDays < 7) return '${gap.inDays}d';
+  return readableDate(at.toLocal());
+}
+
 String readableDay(String day) {
   final value = DateTime.tryParse(day);
   return value == null ? day : readableDate(value);
+}
+
+class Skeleton extends StatefulWidget {
+  const Skeleton({super.key, this.rows = 6, this.leading = 44, this.hero = 0});
+
+  final int rows;
+  final double leading;
+  final double hero;
+
+  @override
+  State<Skeleton> createState() => _SkeletonState();
+}
+
+class _SkeletonState extends State<Skeleton>
+    with SingleTickerProviderStateMixin {
+  late final _wave = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1300),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _wave.dispose();
+    super.dispose();
+  }
+
+  Widget _bar(double width, double height, {double radius = 6}) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(radius),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Loading',
+    child: AnimatedBuilder(
+      animation: _wave,
+      builder: (context, child) => ShaderMask(
+        blendMode: BlendMode.srcATop,
+        shaderCallback: (bounds) => LinearGradient(
+          colors: const [surfaceColor, pressedColor, surfaceColor],
+          stops: const [.3, .5, .7],
+          transform: _Slide(_wave.value),
+        ).createShader(bounds),
+        child: child,
+      ),
+      child: LayoutBuilder(
+        builder: (context, box) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.hero > 0) ...[
+              _bar(box.maxWidth, widget.hero, radius: 12),
+              const SizedBox(height: 20),
+            ],
+            for (var i = 0; i < widget.rows; i++)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    _bar(widget.leading, widget.leading, radius: 8),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _bar(
+                          (box.maxWidth - widget.leading - 12) *
+                              (i.isEven ? .7 : .55),
+                          14,
+                        ),
+                        const SizedBox(height: 8),
+                        _bar((box.maxWidth - widget.leading - 12) * .35, 11),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _Slide extends GradientTransform {
+  const _Slide(this.t);
+
+  final double t;
+
+  @override
+  Matrix4 transform(Rect bounds, {TextDirection? textDirection}) =>
+      Matrix4.translationValues(bounds.width * (2 * t - 1), 0, 0);
 }

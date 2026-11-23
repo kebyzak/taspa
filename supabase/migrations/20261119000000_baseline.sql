@@ -3401,3 +3401,37 @@ language sql stable security definer set search_path = '' as $$
     and private.profile_visible(m.user_id)
   where e.show_id = title_id and e.season_id = selected_season and e.available;
 $$;
+
+
+-- Unread count for the bell badge; same filters as api.inbox_page.
+create or replace function api.inbox_unread_count()
+returns integer language sql stable security definer set search_path = '' as $$
+  select count(*)::integer
+  from private.notifications n
+  left join private.notification_preferences p on p.user_id = n.recipient_id and p.category = private.notification_category(n.kind)
+  where n.recipient_id = (select private.ready_user()) and n.read_at is null
+    and coalesce(p.inbox,true) and private.notification_valid(n);
+$$;
+grant execute on function api.inbox_unread_count() to authenticated;
+
+
+-- Inbox tabs: people (follows, likes, comments) vs titles (episodes, releases, imports); rows carry actor handle and poster.
+drop function if exists api.inbox_page(timestamptz, uuid, uuid);
+create or replace function api.inbox_page(before_time timestamptz default null, before_id uuid default null,
+  item_id uuid default null, people boolean default null)
+returns table (id uuid, kind text, actor_id uuid, target_id uuid, event_at timestamptz, read_at timestamptz,
+  message text, actor_handle text, poster text, title text)
+language sql stable security definer set search_path = '' as $$
+  select n.id, n.kind, n.actor_id, n.target_id, n.event_at, n.read_at, private.notification_text(n), a.handle, t.poster_path,
+    t.display_title
+  from private.notifications n
+  left join private.notification_preferences p on p.user_id = n.recipient_id and p.category = private.notification_category(n.kind)
+  left join api.profiles a on a.user_id = n.actor_id
+  left join api.titles t on n.kind in ('episode', 'wanted_release') and t.id = n.target_id
+  where n.recipient_id = (select private.ready_user()) and coalesce(p.inbox,true) and private.notification_valid(n)
+    and (item_id is null or n.id = item_id)
+    and (people is null or people = (n.kind in ('follow', 'follow_request', 'follow_accepted', 'like', 'comment')))
+    and (before_time is null or (n.event_at,n.id) < (before_time,before_id))
+  order by n.event_at desc,n.id desc limit 20;
+$$;
+grant execute on function api.inbox_page(timestamptz, uuid, uuid, boolean) to authenticated;

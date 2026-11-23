@@ -146,7 +146,10 @@ class _MustImportPageState extends State<MustImportPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('Import from Must')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? ListView(
+              padding: const EdgeInsets.all(16),
+              children: const [Skeleton(rows: 4)],
+            )
           : RefreshIndicator(
               onRefresh: _refresh,
               child: ListView(

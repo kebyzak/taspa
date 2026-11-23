@@ -1,6 +1,7 @@
-import { backendRequest, clientHeaders, idPattern, publicKey, reply, rpc, signedIn } from "../_shared/backend.ts";
+import { backendRequest, clientHeaders, idPattern, preflight, publicKey, reply, rpc, signedIn } from "../_shared/backend.ts";
 
 Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") return preflight();
   if (request.method !== "POST") return reply("method_not_allowed",405);
   try {
     const headers = clientHeaders(request);

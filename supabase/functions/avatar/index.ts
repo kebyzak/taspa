@@ -1,4 +1,4 @@
-import { backendRequest, clientHeaders, idPattern, noCache, reply, rpc, serviceHeaders, signedIn } from "../_shared/backend.ts";
+import { backendRequest, clientHeaders, idPattern, noCache, preflight, reply, rpc, serviceHeaders, signedIn } from "../_shared/backend.ts";
 
 function png(bytes: ArrayBuffer): boolean {
   if (bytes.byteLength < 33 || bytes.byteLength > 1024 * 1024) return false;
@@ -17,6 +17,7 @@ async function remove(path: string): Promise<void> {
 }
 
 Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") return preflight();
   try {
     const reading = request.method === "GET";
     const headers = clientHeaders(request, reading);

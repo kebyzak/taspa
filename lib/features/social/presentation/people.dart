@@ -63,7 +63,7 @@ class _PeopleSearchPageState extends State<PeopleSearchPage> {
           future: _results,
           builder: (context, result) {
             if (result.connectionState == ConnectionState.waiting) {
-              return const LinearProgressIndicator();
+              return const Skeleton(rows: 4);
             }
             if (result.hasError) {
               return const Text('Search is temporarily unavailable.');
@@ -163,8 +163,11 @@ class _FollowingPageState extends State<FollowingPage> {
     for (final sub in _changes) {
       unawaited(sub.cancel());
     }
+    _scroll.dispose();
     super.dispose();
   }
+
+  final _scroll = ScrollController();
 
   Future<void> _load({bool append = false}) async {
     if (!mounted ||
@@ -186,13 +189,39 @@ class _FollowingPageState extends State<FollowingPage> {
       }
       setState(() {
         _loaded = true;
-        _rows = append ? [..._rows, ...rows] : rows;
-        _more = rows.length == 20;
+        if (append) {
+          _rows = [..._rows, ...rows];
+          _more = rows.isNotEmpty;
+          return;
+        }
+        final seam = rows.isEmpty
+            ? -1
+            : _rows.indexWhere((row) => row['id'] == rows.last['id']);
+        if (seam >= 0) {
+          _rows = [...rows, ..._rows.skip(seam + 1)];
+        } else {
+          _rows = rows;
+          _more = rows.isNotEmpty;
+        }
       });
     } on Exception {
       if (mounted) setState(() => _failed = true);
     } finally {
-      if (mounted) setState(() => _working = false);
+      if (mounted) {
+        setState(() => _working = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) => _loadIfNearEnd());
+      }
+    }
+  }
+
+  void _loadIfNearEnd() {
+    if (mounted &&
+        _more &&
+        !_working &&
+        !_failed &&
+        _scroll.hasClients &&
+        _scroll.position.extentAfter < 600) {
+      _load(append: true);
     }
   }
 
@@ -225,43 +254,51 @@ class _FollowingPageState extends State<FollowingPage> {
             )
           : RefreshIndicator(
               onRefresh: _load,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                children: [
-                  if (_working)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 8),
-                      child: LinearProgressIndicator(),
-                    ),
-                  if (_failed)
-                    InlineNotice(
-                      'Could not load Following.',
-                      icon: PhosphorIconsRegular.warningCircle,
-                      action: 'Retry',
-                      onAction: _load,
-                    ),
-                  if (_loaded && _rows.isEmpty)
-                    EmptyState(
-                      icon: PhosphorIconsRegular.users,
-                      title: 'Your feed is quiet',
-                      message: 'What you and the people you follow watch shows up here. Mark something watched or find friends.',
-                      action: FilledButton.icon(
-                        onPressed: () => context.push('/people'),
-                        icon: const Icon(
-                          PhosphorIconsRegular.userPlus,
-                          size: 20,
-                        ),
-                        label: const Text('Find people'),
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (_) {
+                  _loadIfNearEnd();
+                  return false;
+                },
+                child: ListView(
+                  controller: _scroll,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  children: [
+                    if (_working && _rows.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: Skeleton(),
                       ),
-                    ),
-                  for (final group in _groups(_rows)) _FeedGroup(group),
-                  if (_more && !_working)
-                    TextButton(
-                      onPressed: () => _load(append: true),
-                      child: const Text('Load more'),
-                    ),
-                ],
+                    if (_failed)
+                      InlineNotice(
+                        'Could not load Following.',
+                        icon: PhosphorIconsRegular.warningCircle,
+                        action: 'Retry',
+                        onAction: _load,
+                      ),
+                    if (_loaded && _rows.isEmpty)
+                      EmptyState(
+                        icon: PhosphorIconsRegular.users,
+                        title: 'Your feed is quiet',
+                        message: 'What you and the people you follow watch shows up here. Mark something watched or find friends.',
+                        action: FilledButton.icon(
+                          onPressed: () => context.push('/people'),
+                          icon: const Icon(
+                            PhosphorIconsRegular.userPlus,
+                            size: 20,
+                          ),
+                          label: const Text('Find people'),
+                        ),
+                      ),
+                    for (final group in _groups(_rows))
+                      _FeedGroup(group, key: ValueKey(group.first['id'])),
+                    if (_working && _rows.isNotEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Skeleton(rows: 2),
+                      ),
+                  ],
+                ),
               ),
             ),
     );
@@ -269,7 +306,7 @@ class _FollowingPageState extends State<FollowingPage> {
 }
 
 class _FeedGroup extends StatefulWidget {
-  const _FeedGroup(this.rows);
+  const _FeedGroup(this.rows, {super.key});
 
   final List<SocialRow> rows;
 
@@ -281,21 +318,10 @@ class _FeedGroupState extends State<_FeedGroup> {
   static const _collapsed = 3;
   bool _expanded = false;
 
-  static String _ago(String? value) {
-    final at = DateTime.tryParse(value ?? '');
-    if (at == null) return '';
-    final gap = DateTime.now().difference(at.toLocal());
-    if (gap.inMinutes < 1) return 'now';
-    if (gap.inHours < 1) return '${gap.inMinutes}m';
-    if (gap.inDays < 1) return '${gap.inHours}h';
-    if (gap.inDays < 7) return '${gap.inDays}d';
-    return readableDate(at.toLocal());
-  }
-
   @override
   Widget build(BuildContext context) {
     final first = widget.rows.first;
-    final header = _ago(first['created_at'] as String?);
+    final header = timeAgo(first['created_at'] as String?);
     final own = first['own'] == true;
     final review = first['review'] as SocialRow?;
     final verb = review != null
@@ -359,7 +385,7 @@ class _FeedGroupState extends State<_FeedGroup> {
                     if (index > 0) const Divider(indent: 68),
                     _FeedTitleRow(
                       row,
-                      time: switch (_ago(row['created_at'] as String?)) {
+                      time: switch (timeAgo(row['created_at'] as String?)) {
                         final ago when ago != header => ago,
                         _ => '',
                       },
@@ -585,16 +611,29 @@ class _PersonPageState extends State<PersonPage> {
           requestFullMetadata: false,
         );
         if (file == null) return;
-        if (await file.length() > 8 * 1024 * 1024) {
+        if (await file.length() > 30 * 1024 * 1024) {
           throw const FormatException('Image too large');
         }
-        final codec = await ui.instantiateImageCodec(await file.readAsBytes());
+        final ui.Codec codec;
+        try {
+          codec = await ui.instantiateImageCodecWithSize(
+            await ui.ImmutableBuffer.fromUint8List(await file.readAsBytes()),
+            getTargetSize: (width, height) {
+              final scale = 384 / math.max(width, height);
+              return scale >= 1
+                  ? ui.TargetImageSize(width: width, height: height)
+                  : ui.TargetImageSize(
+                      width: math.max(1, (width * scale).round()),
+                      height: math.max(1, (height * scale).round()),
+                    );
+            },
+          );
+        } on Exception {
+          throw const FormatException('Unsupported image');
+        }
         try {
           final frame = await codec.getNextFrame();
           try {
-            if (frame.image.width > 512 || frame.image.height > 512) {
-              throw const FormatException('Image too large');
-            }
             final data = await frame.image.toByteData(
               format: ui.ImageByteFormat.png,
             );
@@ -612,10 +651,18 @@ class _PersonPageState extends State<PersonPage> {
         }
       }
       if (mounted) setState(() => _avatarVersion++);
-    } on Object {
+    } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not update your profile photo.')),
+          SnackBar(
+            content: Text(switch (error) {
+              FormatException(message: 'Image too large') =>
+                'This photo is too large. Pick a smaller one.',
+              FormatException(message: 'Unsupported image') =>
+                'This photo format is not supported. Try a JPEG or PNG.',
+              _ => 'Could not update your profile photo. Try again.',
+            }),
+          ),
         );
       }
     }
@@ -733,7 +780,10 @@ class _PersonPageState extends State<PersonPage> {
           );
         }
         if (result.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator());
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: const [Skeleton(rows: 4, hero: 140)],
+          );
         }
         final row = result.data;
         if (row == null) {
@@ -1545,7 +1595,7 @@ class _PersonLibraryPageState extends State<PersonLibraryPage> {
           },
         ),
         const SizedBox(height: 4),
-        if (_working) const LinearProgressIndicator(),
+        if (_working && _rows.isEmpty) const Skeleton(rows: 6, leading: 64),
         if (_failed)
           InlineNotice(
             'Could not load this library.',
@@ -1641,7 +1691,7 @@ class _RelationshipPageState extends State<RelationshipPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (_loading) const LinearProgressIndicator(),
+          if (_loading && _rows.isEmpty) const Skeleton(),
           if (_error)
             TextButton(
               onPressed: _load,
