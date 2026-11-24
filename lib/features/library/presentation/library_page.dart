@@ -344,6 +344,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
                     _ => 'Marked watched',
                   },
           ),
+          persist: false,
           action: result.canUndo
               ? SnackBarAction(
                   label: 'Undo',
@@ -372,6 +373,7 @@ class _LibraryBodyState extends State<_LibraryBody> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(trackingMessage(error)),
+          persist: false,
           action: isTrackingConflict(error)
               ? null
               : SnackBarAction(

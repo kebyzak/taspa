@@ -43,3 +43,6 @@ verify_jwt = false
 
 [functions.must-import]
 verify_jwt = false
+
+[functions.sign-in]
+verify_jwt = false

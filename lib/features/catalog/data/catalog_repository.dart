@@ -290,7 +290,7 @@ class CatalogRepository {
           .from('seasons')
           .select('id,season_number,display_title,loaded_at')
           .eq('show_id', showId)
-          .order('season_number'),
+          .order('season_number', ascending: true),
       fallback: (saved) => (saved as List).cast<Map<String, dynamic>>(),
     );
     return rows
@@ -303,6 +303,31 @@ class CatalogRepository {
           ),
         )
         .toList();
+  }
+
+  /// Released and watched episode counts per season id, for the signed-in user.
+  Future<Map<String, ({int released, int watched})>> seasonProgress(
+    String showId,
+  ) async {
+    final owner = client.auth.currentUser?.id ?? '';
+    if (owner.isEmpty) return const {};
+    final rows = await store.cached(
+      owner,
+      'season_progress:$showId',
+      () async =>
+          await client
+                  .schema('api')
+                  .rpc('season_progress', params: {'title_id': showId})
+              as List,
+      fallback: (saved) => saved as List,
+    );
+    return {
+      for (final row in rows.cast<Map<String, dynamic>>())
+        row['season_id'] as String: (
+          released: row['released'] as int,
+          watched: row['watched'] as int,
+        ),
+    };
   }
 
   Future<void> hydrateSeason(int tmdbId, int seasonNumber) async {

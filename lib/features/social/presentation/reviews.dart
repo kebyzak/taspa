@@ -215,7 +215,11 @@ class _ActivityAvatar extends StatelessWidget {
                     ],
                     if (review != null) ...[
                       if (score != null) const SizedBox(width: 4),
-                      const Icon(Icons.notes, size: 13, color: inkColor),
+                      const Icon(
+                        PhosphorIconsFill.notePencil,
+                        size: 13,
+                        color: inkColor,
+                      ),
                     ],
                     if (score == null && review == null)
                       const Icon(

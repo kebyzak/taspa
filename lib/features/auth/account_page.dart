@@ -11,7 +11,7 @@ import '../../core/offline_store.dart';
 import '../notifications/notifications.dart';
 import 'auth_cubit.dart';
 
-enum _Form { signIn, signUp, forgot, verify, recoveryCode }
+enum _Form { signIn, signUp, forgot }
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key, this.returnTo});
@@ -26,14 +26,13 @@ class _AccountPageState extends State<AccountPage> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _handle = TextEditingController();
-  final _code = TextEditingController();
   _Form _form = _Form.signIn;
   bool _saving = false;
   String? _message;
 
   @override
   void dispose() {
-    for (final controller in [_email, _password, _handle, _code]) {
+    for (final controller in [_email, _password, _handle]) {
       controller.dispose();
     }
     super.dispose();
@@ -50,18 +49,17 @@ class _AccountPageState extends State<AccountPage> {
         'Enter a handle.',
       AccountPhase.recovery when _password.text.isEmpty =>
         'Enter a new password.',
-      _ when guest && email.isEmpty => 'Enter your email.',
-      _ when guest && !email.contains('@') => 'Enter a valid email.',
+      _ when guest && email.isEmpty =>
+        _form == _Form.signIn
+            ? 'Enter your email or handle.'
+            : 'Enter your email.',
+      _ when guest && _form != _Form.signIn && !email.contains('@') =>
+        'Enter a valid email.',
       _
           when guest &&
               (_form == _Form.signIn || _form == _Form.signUp) &&
               _password.text.isEmpty =>
         'Enter your password.',
-      _
-          when guest &&
-              (_form == _Form.verify || _form == _Form.recoveryCode) &&
-              _code.text.trim().isEmpty =>
-        'Enter the code from your email.',
       _ => null,
     };
     if (missing != null) {
@@ -82,10 +80,21 @@ class _AccountPageState extends State<AccountPage> {
           await account.refresh();
         case AccountPhase.guest:
           switch (_form) {
-            case _Form.signIn:
+            case _Form.signIn when email.indexOf('@') > 0:
               await auth.signInWithPassword(
                 email: email,
                 password: _password.text,
+              );
+            case _Form.signIn:
+              final response = await Supabase.instance.client.functions.invoke(
+                'sign-in',
+                body: {
+                  'handle': email.replaceFirst('@', ''),
+                  'password': _password.text,
+                },
+              );
+              await auth.setSession(
+                (response.data as Map)['refresh_token'] as String,
               );
             case _Form.signUp:
               await auth.signUp(
@@ -95,26 +104,18 @@ class _AccountPageState extends State<AccountPage> {
               );
               if (mounted) {
                 setState(() {
-                  _form = _Form.verify;
-                  _message =
-                      'Check your email for a verification link or code.';
+                  _form = _Form.signIn;
+                  _message = 'Check your email and open the confirmation link, then sign in.';
                 });
               }
             case _Form.forgot:
               await auth.resetPasswordForEmail(email, redirectTo: authCallback);
               if (mounted) {
                 setState(() {
-                  _form = _Form.recoveryCode;
+                  _form = _Form.signIn;
                   _message = 'If the address is registered, a reset message will arrive shortly.';
                 });
               }
-            case _Form.verify:
-            case _Form.recoveryCode:
-              await auth.verifyOTP(
-                type: _form == _Form.verify ? OtpType.signup : OtpType.recovery,
-                email: email,
-                token: _code.text.trim(),
-              );
           }
         case AccountPhase.loading:
         case AccountPhase.ready:
@@ -131,12 +132,23 @@ class _AccountPageState extends State<AccountPage> {
             'weak_password' =>
               'Choose a stronger password (at least 6 characters).',
             'email_address_invalid' => 'Enter a valid email.',
-            'otp_expired' => 'That code is wrong or has expired.',
             'over_request_rate_limit' || 'over_email_send_rate_limit' =>
               'Too many attempts. Wait a minute and try again.',
             _ =>
               'Something went wrong. Try again.'
                   '${kDebugMode ? '\n[${error.statusCode}] ${error.code}: ${error.message}' : ''}',
+          };
+        });
+      }
+    } on FunctionException catch (error) {
+      if (mounted) {
+        setState(() {
+          _message = switch ((error.details as Map?)?['code']) {
+            'invalid_credentials' => 'Wrong handle or password.',
+            'email_not_confirmed' => 'Verify your email before signing in.',
+            'over_request_rate_limit' =>
+              'Too many attempts. Wait a minute and try again.',
+            _ => 'Something went wrong. Try again.',
           };
         });
       }
@@ -290,8 +302,6 @@ class _AccountPageState extends State<AccountPage> {
         _Form.signIn => 'Sign in',
         _Form.signUp => 'Create account',
         _Form.forgot => 'Send reset email',
-        _Form.verify => 'Verify email',
-        _Form.recoveryCode => 'Verify code',
       },
     };
     return BlocListener<AccountCubit, Account>(
@@ -300,13 +310,15 @@ class _AccountPageState extends State<AccountPage> {
           current.phase == AccountPhase.ready,
       listener: (context, state) {
         final route = widget.returnTo;
-        if (route != null &&
-            (route.startsWith('/titles/') || route == '/library')) {
-          if (context.canPop()) {
-            context.pop();
-          } else {
-            context.go(route);
-          }
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go(
+            route != null &&
+                    (route.startsWith('/titles/') || route == '/library')
+                ? route
+                : '/profile',
+          );
         }
       },
       child: ListView(
@@ -350,8 +362,15 @@ class _AccountPageState extends State<AccountPage> {
             TextField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
-              autofillHints: const [AutofillHints.email],
-              decoration: const InputDecoration(labelText: 'Email'),
+              autocorrect: false,
+              autofillHints: [
+                _form == _Form.signIn
+                    ? AutofillHints.username
+                    : AutofillHints.email,
+              ],
+              decoration: InputDecoration(
+                labelText: _form == _Form.signIn ? 'Email or handle' : 'Email',
+              ),
             ),
           if (phase == AccountPhase.needsHandle)
             TextField(
@@ -367,15 +386,6 @@ class _AccountPageState extends State<AccountPage> {
               controller: _password,
               obscureText: true,
               decoration: const InputDecoration(labelText: 'Password'),
-            ),
-          ],
-          if (phase == AccountPhase.guest &&
-              (_form == _Form.verify || _form == _Form.recoveryCode)) ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: _code,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Email code'),
             ),
           ],
           if (_message case final message?) ...[
@@ -407,11 +417,6 @@ class _AccountPageState extends State<AccountPage> {
                   TextButton(
                     onPressed: () => _switchForm(_Form.forgot),
                     child: const Text('Forgot password'),
-                  ),
-                if (_form == _Form.signIn)
-                  TextButton(
-                    onPressed: () => _switchForm(_Form.verify),
-                    child: const Text('Enter verification code'),
                   ),
               ],
             ),

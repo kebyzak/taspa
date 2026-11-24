@@ -8,6 +8,114 @@ import '../../library/data/library_repository.dart';
 import '../../social/presentation/reviews.dart';
 import '../data/catalog_repository.dart';
 
+Future<void> confirmShowBatch(
+  BuildContext context, {
+  required String showId,
+  required TrackingState tracking,
+  required Future<void> Function(TrackingCommand) apply,
+  required String scope,
+  required String question,
+  String? season,
+  String? episode,
+}) async {
+  try {
+    final preview = await context.read<LibraryRepository>().preview(
+      showId,
+      scope,
+      seasonId: season,
+      episodeId: episode,
+    );
+    if (!context.mounted) return;
+    final count = (preview['episodes'] as List).length;
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(question),
+        content: Text(
+          '$count ${count == 1 ? 'episode' : 'episodes'} will change.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+    if (approved != true || !context.mounted) return;
+    await apply(
+      TrackingCommand(showId, 'apply_show_batch', {
+        'scope': scope,
+        'season_id': ?season,
+        'episode_id': ?episode,
+        'episodes': preview['episodes'],
+        'catalog_revision': preview['catalog_revision'],
+        'show_revision': tracking.showRevision,
+        'wanted_revision': tracking.revision,
+      }),
+    );
+  } on Exception {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not preview this change. Check the season data or select a smaller range.',
+          ),
+        ),
+      );
+    }
+  }
+}
+
+class ActionLink extends StatelessWidget {
+  const ActionLink({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: onTap != null,
+    excludeSemantics: true,
+    label: label,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: coralColor),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: coralColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+typedef _Progress = ({int released, int watched});
+
 class ShowSeasons extends StatefulWidget {
   const ShowSeasons({
     super.key,
@@ -32,6 +140,7 @@ class _ShowSeasonsState extends State<ShowSeasons> {
   List<CatalogSeason> _seasons = [];
   CatalogSeason? _selected;
   List<CatalogEpisode> _episodes = [];
+  Map<String, _Progress> _progress = {};
   int _version = 0;
   bool _loading = true;
   bool _failed = false;
@@ -49,7 +158,24 @@ class _ShowSeasonsState extends State<ShowSeasons> {
         !_loading &&
         _selected != null) {
       _load(_selected!, hydrate: false);
+      _loadProgress();
     }
+  }
+
+  Future<void> _loadProgress() async {
+    try {
+      final progress = await context.read<CatalogRepository>().seasonProgress(
+        widget.show.id!,
+      );
+      if (mounted) setState(() => _progress = progress);
+    } on Exception {
+      // Progress only decorates the picker; the season list works without it.
+    }
+  }
+
+  bool _unfinished(CatalogSeason season) {
+    final p = _progress[season.id];
+    return p == null || p.watched < p.released;
   }
 
   Future<void> _loadSeasons() async {
@@ -62,9 +188,16 @@ class _ShowSeasonsState extends State<ShowSeasons> {
         widget.show.id!,
       );
       if (!mounted) return;
+      await _loadProgress();
+      if (!mounted) return;
       setState(() => _seasons = seasons);
+      final numbered = seasons.where((season) => season.number > 0);
+      final next = widget.tracking?.next?.season;
+      final started = _progress.values.any((p) => p.watched > 0);
       final first =
-          seasons.where((season) => season.number > 0).firstOrNull ??
+          numbered.where((season) => season.number == next).firstOrNull ??
+          (started ? numbered.where(_unfinished).firstOrNull : null) ??
+          numbered.firstOrNull ??
           seasons.firstOrNull;
       if (first != null) {
         await _load(first);
@@ -150,63 +283,22 @@ class _ShowSeasonsState extends State<ShowSeasons> {
 
   Future<void> _batch(
     String scope,
-    String label, {
+    String question, {
     String? season,
     String? episode,
   }) async {
     final tracking = widget.tracking;
     if (tracking == null || _loading || widget.pending) return;
-    try {
-      final preview = await context.read<LibraryRepository>().preview(
-        widget.show.id!,
-        scope,
-        seasonId: season,
-        episodeId: episode,
-      );
-      if (!mounted) return;
-      final count = (preview['episodes'] as List).length;
-      final approved = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(label),
-          content: Text(
-            '$count ${count == 1 ? 'episode' : 'episodes'} will change.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Confirm'),
-            ),
-          ],
-        ),
-      );
-      if (approved != true || !mounted) return;
-      await widget.apply(
-        TrackingCommand(widget.show.id!, 'apply_show_batch', {
-          'scope': scope,
-          'season_id': ?season,
-          'episode_id': ?episode,
-          'episodes': preview['episodes'],
-          'catalog_revision': preview['catalog_revision'],
-          'show_revision': tracking.showRevision,
-          'wanted_revision': tracking.revision,
-        }),
-      );
-    } on Exception {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not preview this change. Check the season data or select a smaller range.',
-            ),
-          ),
-        );
-      }
-    }
+    await confirmShowBatch(
+      context,
+      showId: widget.show.id!,
+      tracking: tracking,
+      apply: widget.apply,
+      scope: scope,
+      question: question,
+      season: season,
+      episode: episode,
+    );
   }
 
   Future<void> _episodeSheet(CatalogEpisode episode) async {
@@ -295,50 +387,35 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     final action = episode.watched ? 'unwatch' : 'mark';
     final actionLabel = episode.watched ? 'Mark unwatched' : 'Mark watched';
     final day = DateTime.tryParse(episode.releaseDay ?? '');
+    final next = tracked?.next?.id == episode.id;
     final row = Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 0, 8),
+      padding: const EdgeInsets.fromLTRB(8, 4, 0, 4),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 28,
+            width: 36,
             child: Text(
               '${episode.number}',
               style: const TextStyle(
                 fontSize: 13,
-                height: 1.6,
                 fontWeight: FontWeight.w600,
                 color: mutedColor,
               ),
             ),
           ),
-          SizedBox(
-            width: 14,
-            height: 22,
-            child: tracked == null
-                ? null
-                : episode.watched
-                ? const Icon(
-                    PhosphorIconsBold.check,
-                    size: 14,
-                    color: mutedColor,
-                  )
-                : Center(
-                    child: Container(
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        color: coralColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-          ),
-          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (next)
+                  const Text(
+                    'Next up',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: coralColor,
+                    ),
+                  ),
                 Text(
                   episode.title,
                   maxLines: 2,
@@ -356,6 +433,22 @@ class _ShowSeasonsState extends State<ShowSeasons> {
               ],
             ),
           ),
+          if (tracked != null)
+            IconButton(
+              tooltip: actionLabel,
+              onPressed: canToggle ? () => _change(episode, action) : null,
+              icon: Icon(
+                episode.watched
+                    ? PhosphorIconsFill.checkCircle
+                    : PhosphorIconsRegular.circle,
+                size: 26,
+                color: episode.watched
+                    ? mutedColor
+                    : next
+                    ? coralColor
+                    : hairlineColor,
+              ),
+            ),
         ],
       ),
     );
@@ -386,6 +479,83 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     );
   }
 
+  String _seasonLabel(CatalogSeason season) =>
+      season.number > 0 ? 'Season ${season.number}' : season.title;
+
+  bool _done(CatalogSeason season) {
+    final p = _progress[season.id];
+    return p != null && p.released > 0 && p.watched >= p.released;
+  }
+
+  String? _progressText(CatalogSeason season) {
+    final p = _progress[season.id];
+    if (widget.tracking == null || p == null || p.released == 0) return null;
+    return '${p.watched} / ${p.released}';
+  }
+
+  Widget _picker(CatalogSeason selected) => InkWell(
+    borderRadius: BorderRadius.circular(12),
+    onTap: _pickSeason,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: hairlineColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _seasonLabel(selected),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+          Text(
+            '${_seasons.length} seasons',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(width: 8),
+          const Icon(PhosphorIconsRegular.caretDown, size: 18),
+        ],
+      ),
+    ),
+  );
+
+  Future<void> _pickSeason() async {
+    final picked = await showModalBottomSheet<CatalogSeason>(
+      useRootNavigator: true,
+      isScrollControlled: true,
+      context: context,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final season in _seasons)
+                ListTile(
+                  selected: season.id == _selected?.id,
+                  title: Text(_seasonLabel(season)),
+                  trailing: widget.tracking != null && _done(season)
+                      ? const Icon(PhosphorIconsBold.check, size: 18)
+                      : switch (_progressText(season)) {
+                          final text? => Text(text),
+                          null => null,
+                        },
+                  onTap: () => Navigator.pop(context, season),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked != null && mounted && picked.id != _selected?.id) {
+      await _load(picked);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -396,27 +566,25 @@ class _ShowSeasonsState extends State<ShowSeasons> {
     final busy = _loading || widget.pending;
     final numbered = (selected?.number ?? 0) > 0;
     final batch = [
-      if (numbered)
-        (
-          'mark_season_watched',
-          'Mark season watched',
-          'Mark released episodes watched?',
-        ),
       if (numbered && tracked?.intent != null)
         (
           'mark_season_unwatched',
           'Mark season unwatched',
           'Mark this season unwatched?',
         ),
-      if (['Ended', 'Canceled'].contains(widget.show.releaseStatus))
-        (
-          'mark_ended_show_watched',
-          'Mark all released episodes watched',
-          'Mark all released episodes watched?',
-        ),
       if (tracked?.intent != null)
         ('remove_show', 'Remove show tracking', 'Remove show tracking?'),
     ];
+    final seasonWatched = released.where((e) => e.watched).length;
+    final canMarkAll =
+        tracked != null &&
+        ['Ended', 'Canceled'].contains(widget.show.releaseStatus) &&
+        tracked.watched < tracked.released;
+    final canMarkSeason =
+        tracked != null &&
+        numbered &&
+        !_loading &&
+        seasonWatched < released.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -424,29 +592,50 @@ class _ShowSeasonsState extends State<ShowSeasons> {
         SectionHeader(
           'Seasons',
           padding: EdgeInsets.zero,
-          trailing: tracked == null || batch.isEmpty
+          trailing: tracked == null || (batch.isEmpty && !canMarkAll)
               ? null
-              : PopupMenuButton<String>(
-                  tooltip: 'Season actions',
-                  enabled: !busy,
-                  icon: const Icon(PhosphorIconsRegular.dotsThree),
-                  onSelected: (scope) {
-                    final (_, _, question) = batch.firstWhere(
-                      (item) => item.$1 == scope,
-                    );
-                    _batch(
-                      scope,
-                      question,
-                      season: scope.contains('season') ? selected!.id : null,
-                    );
-                  },
-                  itemBuilder: (context) => [
-                    for (final (scope, label, _) in batch)
-                      PopupMenuItem(value: scope, child: Text(label)),
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (canMarkAll)
+                      ActionLink(
+                        icon: PhosphorIconsRegular.checks,
+                        label: 'Mark all watched',
+                        onTap: busy
+                            ? null
+                            : () => _batch(
+                                'mark_ended_show_watched',
+                                'Mark all released episodes watched?',
+                              ),
+                      ),
+                    if (batch.isNotEmpty)
+                      PopupMenuButton<String>(
+                        tooltip: 'Season actions',
+                        enabled: !busy,
+                        icon: const Icon(PhosphorIconsRegular.dotsThree),
+                        onSelected: (scope) {
+                          final (_, _, question) = batch.firstWhere(
+                            (item) => item.$1 == scope,
+                          );
+                          _batch(
+                            scope,
+                            question,
+                            season: scope.contains('season')
+                                ? selected!.id
+                                : null,
+                          );
+                        },
+                        itemBuilder: (context) => [
+                          for (final (scope, label, _) in batch)
+                            PopupMenuItem(value: scope, child: Text(label)),
+                        ],
+                      ),
                   ],
                 ),
         ),
-        if (_seasons.isNotEmpty)
+        if (_seasons.length > 6 && selected != null)
+          _picker(selected)
+        else if (_seasons.isNotEmpty)
           SizedBox(
             height: 48,
             child: ListView.separated(
@@ -455,20 +644,52 @@ class _ShowSeasonsState extends State<ShowSeasons> {
               separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, index) {
                 final season = _seasons[index];
-                final active = season.id == selected?.id;
+                final done = tracked != null && _done(season);
                 return ChoiceChip(
-                  label: Text(
-                    season.number > 0
-                        ? 'Season ${season.number}'
-                        : season.title,
-                  ),
+                  avatar: done
+                      ? const Icon(PhosphorIconsBold.check, size: 14)
+                      : null,
+                  label: Text(_seasonLabel(season)),
                   tooltip: season.title,
-                  selected: active,
+                  selected: season.id == selected?.id,
                   onSelected: (_) => _load(season),
                 );
               },
             ),
           ),
+        if (tracked != null && !_loading && released.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: seasonWatched / released.length,
+            minHeight: 4,
+            borderRadius: BorderRadius.circular(2),
+            semanticsLabel: 'Season episodes watched',
+            semanticsValue: '$seasonWatched of ${released.length}',
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '$seasonWatched of ${released.length} watched',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+              if (canMarkSeason)
+                ActionLink(
+                  icon: PhosphorIconsRegular.checks,
+                  label: 'Mark season watched',
+                  onTap: busy
+                      ? null
+                      : () => _batch(
+                          'mark_season_watched',
+                          'Mark released episodes watched?',
+                          season: selected!.id,
+                        ),
+                ),
+            ],
+          ),
+        ],
         if (_loading)
           const Padding(
             padding: EdgeInsets.only(top: 8),

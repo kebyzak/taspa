@@ -163,6 +163,7 @@ class _TitleBodyState extends State<_TitleBody> {
                     _ => 'Viewing updated',
                   },
           ),
+          persist: false,
           action: canUndo
               ? SnackBarAction(
                   label: 'Undo',

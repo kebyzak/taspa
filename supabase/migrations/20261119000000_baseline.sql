@@ -795,7 +795,8 @@ begin
       (scope = 'mark_ended_show_watched' or (scope = 'mark_season_watched' and s.id = season)
         or (scope = 'mark_through' and (s.season_number, e.episode_number) <= (anchor_season, anchor_episode)))
     end;
-  if jsonb_array_length(targets) > 300 then
+  -- Long anime (Naruto Shippuden: 500, One Piece: 1100+) must fit in one "mark all".
+  if jsonb_array_length(targets) > 2000 then
     raise exception using errcode = '22023', message = 'batch_limit';
   end if;
   return targets;
@@ -3435,3 +3436,33 @@ language sql stable security definer set search_path = '' as $$
   order by n.event_at desc,n.id desc limit 20;
 $$;
 grant execute on function api.inbox_page(timestamptz, uuid, uuid, boolean) to authenticated;
+
+-- ===== sign in by handle =====
+
+-- Only the sign-in edge function may resolve a handle; emails never reach clients.
+create or replace function api.account_email(requested_handle text) returns text
+language sql stable security definer set search_path = '' as $$
+  select u.email from api.profiles p join auth.users u on u.id = p.user_id
+  where p.handle = lower(btrim(requested_handle));
+$$;
+revoke execute on function api.account_email(text) from public, anon, authenticated;
+grant execute on function api.account_email(text) to service_role;
+
+-- ===== season progress =====
+
+-- Per-season counts for the season picker; kept out of show_snapshot so library lists stay small.
+create or replace function api.season_progress(title_id uuid)
+returns table (season_id uuid, released int, watched int)
+language sql stable security definer set search_path = '' as $$
+  select s.id,
+    count(*) filter (where private.episode_released(e.release_day))::int,
+    count(*) filter (where private.episode_released(e.release_day) and m.watched)::int
+  from api.seasons s
+  join api.episodes e on e.season_id = s.id and e.available
+  left join private.episode_marks m on m.user_id = (select auth.uid()) and m.episode_id = e.id
+    and private.profile_visible(m.user_id)
+  where s.show_id = title_id and s.available
+  group by s.id;
+$$;
+revoke execute on function api.season_progress(uuid) from public, anon;
+grant execute on function api.season_progress(uuid) to authenticated;
