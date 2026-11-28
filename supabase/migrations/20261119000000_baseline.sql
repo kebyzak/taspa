@@ -442,9 +442,14 @@ begin
   if request_key !~ '^[a-f0-9]{64}$' or requester !~ '^[a-f0-9]{64}$' then
     raise exception using errcode = '22023', message = 'invalid_catalog_key';
   end if;
+  -- Fresh cache hits cost nothing, so a busy import or a burst of shelves never blanks what is already stored.
+  select * into entry from private.catalog_cache where cache_key = request_key;
+  if entry.expires_at > now() then
+    return jsonb_build_object('value', entry.value, 'fetched_at', entry.fetched_at, 'state', 'fresh');
+  end if;
   if not private.take_catalog_budget('catalog', 900)
     or not private.take_catalog_budget(requester, 60) then
-    return jsonb_build_object('state', 'limited');
+    return jsonb_build_object('value', entry.value, 'fetched_at', entry.fetched_at, 'state', 'limited');
   end if;
   delete from private.rate_limits where (bucket, window_start) in (
     select bucket, window_start from private.rate_limits
@@ -1658,7 +1663,7 @@ begin
     create extension if not exists pg_cron;
     create extension if not exists pg_net;
     create extension if not exists supabase_vault;
-    perform cron.schedule('taspa-push-outbox', '*/5 * * * *', $task$
+    perform cron.schedule('taspa-push-outbox', '*/15 * * * *', $task$
       select net.http_post(
         url := base.decrypted_secret || '/functions/v1/maintenance',
         headers := jsonb_build_object('Content-Type','application/json','x-taspa-worker',worker.decrypted_secret),
@@ -2922,19 +2927,35 @@ returns setof jsonb language sql stable security definer set search_path = '' as
     join private.profile_settings s on s.user_id = f.followed_id
     where private.can_see(f.followed_id, s.library_audience)
   ),
+  -- Marks of one show less than an hour apart form one run, so a 500-episode binge is a single feed row.
+  marks as (
+    select m.user_id, m.show_id, pe.own, m.marked_at, m.episode_id,
+      s.season_number * 10000 + e.episode_number as code, e.display_title,
+      case when m.marked_at - lag(m.marked_at) over (partition by m.user_id, m.show_id order by m.marked_at, m.episode_id)
+        <= interval '1 hour' then 0 else 1 end as fresh
+    from people pe
+    join private.episode_marks m on m.user_id = pe.user_id and m.watched and m.marked_at is not null
+    join api.episodes e on e.id = m.episode_id
+    join api.seasons s on s.id = e.season_id
+  ),
+  runs as (
+    select user_id, show_id, own, min(marked_at) as started, max(marked_at) as at, count(*) as n,
+      min(code) as lo, max(code) as hi, min(display_title) as title
+    from (select *, sum(fresh) over (partition by user_id, show_id order by marked_at, episode_id) as run from marks) x
+    group by user_id, show_id, own, run
+  ),
   logs as (
     select jsonb_build_object('id',v.id,'created_at',v.logged_at,'kind','watched','watched_on',v.watched_on,
         'actor_id',v.user_id,'own',pe.own,'title_id',v.movie_id) as item, v.logged_at as at, v.id
     from people pe join private.movie_viewings v on v.user_id = pe.user_id and v.deleted_at is null and not v.imported
     union all
-    select jsonb_build_object('id',md5(m.user_id::text || m.episode_id::text)::uuid,'created_at',m.marked_at,
-        'kind','episode','actor_id',m.user_id,'own',pe.own,'title_id',m.show_id,
-        'season_number',s.season_number,'episode_number',e.episode_number,'episode',e.display_title),
-      m.marked_at, md5(m.user_id::text || m.episode_id::text)::uuid
-    from people pe
-    join private.episode_marks m on m.user_id = pe.user_id and m.watched and m.marked_at is not null
-    join api.episodes e on e.id = m.episode_id
-    join api.seasons s on s.id = e.season_id
+    select jsonb_build_object('id',md5(r.user_id::text || r.show_id::text || extract(epoch from r.started)::text)::uuid,
+        'created_at',r.at,'kind','episode','actor_id',r.user_id,'own',r.own,'title_id',r.show_id,'episode_count',r.n,
+        'first_season',r.lo / 10000,'first_episode',r.lo % 10000,'last_season',r.hi / 10000,'last_episode',r.hi % 10000,
+        -- season_number/episode_number keep released app versions (which read one episode per row) from crashing.
+        'season_number',r.lo / 10000,'episode_number',r.lo % 10000,'episode',case when r.n = 1 then r.title end),
+      r.at, md5(r.user_id::text || r.show_id::text || extract(epoch from r.started)::text)::uuid
+    from runs r
     union all
     -- tracked_shows has no surrogate key; a stable uuid derived from the pair keeps keyset paging deterministic.
     select jsonb_build_object('id',md5(sh.user_id::text || sh.show_id::text)::uuid,'created_at',sh.tracking_started_at,
@@ -3466,3 +3487,29 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke execute on function api.season_progress(uuid) from public, anon;
 grant execute on function api.season_progress(uuid) to authenticated;
+
+
+-- ===== 20261128000000_instant_push.sql =====
+
+-- Pushes go out right after a notification is written; the 15-minute cron only retries what failed.
+-- Statement-level, so a batch of release notices is one call. pg_net sends after commit, so the worker sees the rows.
+create or replace function private.kick_push() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform net.http_post(
+    url := base.decrypted_secret || '/functions/v1/maintenance',
+    headers := jsonb_build_object('Content-Type','application/json','x-taspa-worker',worker.decrypted_secret),
+    body := '{"job":"push"}'::jsonb,
+    timeout_milliseconds := 60000
+  )
+  from vault.decrypted_secrets base, vault.decrypted_secrets worker
+  where base.name = 'taspa_project_url' and worker.name = 'taspa_worker_key';
+  return null;
+exception when others then
+  -- A push hiccup must never fail the follow, like or release that wrote the notification.
+  return null;
+end;
+$$;
+drop trigger if exists notifications_kick_push on private.notifications;
+create trigger notifications_kick_push after insert on private.notifications
+for each statement execute function private.kick_push();

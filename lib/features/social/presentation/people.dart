@@ -315,8 +315,7 @@ class _FeedGroup extends StatefulWidget {
 }
 
 class _FeedGroupState extends State<_FeedGroup> {
-  static const _collapsed = 3;
-  bool _expanded = false;
+  int _visible = 3;
 
   @override
   Widget build(BuildContext context) {
@@ -329,9 +328,7 @@ class _FeedGroupState extends State<_FeedGroup> {
         : first['kind'] == 'import'
         ? ' imported ${first['count']} titles from ${first['source']}'
         : '';
-    final shown = _expanded
-        ? widget.rows
-        : widget.rows.take(_collapsed).toList();
+    final shown = widget.rows.take(_visible).toList();
     final hidden = widget.rows.length - shown.length;
     return Padding(
       padding: const EdgeInsets.only(bottom: 20),
@@ -394,12 +391,12 @@ class _FeedGroupState extends State<_FeedGroup> {
                   if (hidden > 0) ...[
                     const Divider(),
                     InkWell(
-                      onTap: () => setState(() => _expanded = true),
+                      onTap: () => setState(() => _visible += 10),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         child: Center(
                           child: Text(
-                            'Show $hidden more',
+                            'Show ${hidden < 10 ? hidden : 10} more of $hidden',
                             style: const TextStyle(
                               color: coralColor,
                               fontWeight: FontWeight.w600,
@@ -426,21 +423,15 @@ class _FeedTitleRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final episodes = [...?(row['episodes'] as List<SocialRow>?)]
-      ..sort(
-        (a, b) =>
-            ((a['season_number'] as int) * 10000 + (a['episode_number'] as int))
-                .compareTo(
-                  (b['season_number'] as int) * 10000 +
-                      (b['episode_number'] as int),
-                ),
-      );
-    String code(SocialRow e) =>
-        'S${e['season_number']} E${e['episode_number']}';
-    final what = switch (episodes) {
-      [final e] => '${code(e)} · ${e['episode']}',
-      [final first, ..., final last] =>
-        '${episodes.length} episodes · ${code(first)} – ${code(last)}',
+    final runs = [...?(row['episodes'] as List<SocialRow>?)];
+    int at(SocialRow r, String end) =>
+        (r['${end}_season'] as int) * 10000 + (r['${end}_episode'] as int);
+    String code(int c) => 'S${c ~/ 10000} E${c % 10000}';
+    final count = runs.fold(0, (sum, r) => sum + (r['episode_count'] as int));
+    final what = switch (runs) {
+      [final r] when count == 1 => '${code(at(r, 'first'))} · ${r['episode']}',
+      [_, ...] =>
+        '$count episodes · ${code(runs.map((r) => at(r, 'first')).reduce(math.min))} – ${code(runs.map((r) => at(r, 'last')).reduce(math.max))}',
       [] => [
         switch (row['kind']) {
           'rating' => 'Rated',
@@ -510,6 +501,28 @@ class PersonPage extends StatefulWidget {
 class _PersonPageState extends State<PersonPage> {
   late Future<SocialRow?> _profile = _fetch();
   int _avatarVersion = 0;
+  bool _hasPhoto = false;
+
+  String get _photoUrl =>
+      '$backendUrl/functions/v1/avatar?user=${widget.id}&v=$_avatarVersion';
+
+  Future<void> _viewPhoto() => showDialog<void>(
+    context: context,
+    useRootNavigator: true,
+    barrierColor: Colors.black87,
+    builder: (dialog) => GestureDetector(
+      onTap: () => Navigator.pop(dialog),
+      child: InteractiveViewer(
+        child: Center(
+          child: Image.network(
+            _photoUrl,
+            headers: context.read<SocialRepository>().avatarHeaders,
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
+    ),
+  );
   int _generation = 0;
   bool _regionSent = false;
   final _lists = GlobalKey<_ProfileListsState>();
@@ -669,28 +682,36 @@ class _PersonPageState extends State<PersonPage> {
   }
 
   Future<void> _photoSheet() async {
-    final remove = await showModalBottomSheet<bool>(
+    final choice = await showModalBottomSheet<String>(
       useRootNavigator: true,
       context: context,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (_hasPhoto)
+              ListTile(
+                leading: const Icon(PhosphorIconsRegular.user),
+                title: const Text('View photo'),
+                onTap: () => Navigator.pop(context, 'view'),
+              ),
             ListTile(
               leading: const Icon(PhosphorIconsRegular.image),
               title: const Text('Choose photo'),
-              onTap: () => Navigator.pop(context, false),
+              onTap: () => Navigator.pop(context, 'choose'),
             ),
             ListTile(
               leading: const Icon(PhosphorIconsRegular.trash),
               title: const Text('Remove photo'),
-              onTap: () => Navigator.pop(context, true),
+              onTap: () => Navigator.pop(context, 'remove'),
             ),
           ],
         ),
       ),
     );
-    if (remove != null && mounted) await _changeAvatar(remove);
+    if (choice == null || !mounted) return;
+    if (choice == 'view') return _viewPhoto();
+    await _changeAvatar(choice == 'remove');
   }
 
   Future<void> _settingsSheet() async {
@@ -828,10 +849,12 @@ class _PersonPageState extends State<PersonPage> {
               Row(
                 children: [
                   Semantics(
-                    button: own,
-                    label: own ? 'Change profile photo' : null,
+                    button: true,
+                    label: own ? 'Change profile photo' : 'View profile photo',
                     child: GestureDetector(
-                      onTap: own ? () => _photoSheet() : null,
+                      onTap: own
+                          ? () => _photoSheet()
+                          : () => _hasPhoto ? _viewPhoto() : null,
                       child: Container(
                         width: 80,
                         height: 80,
@@ -842,12 +865,19 @@ class _PersonPageState extends State<PersonPage> {
                         ),
                         child: row['can_read'] == true
                             ? Image.network(
-                                '$backendUrl/functions/v1/avatar?user=${widget.id}&v=$_avatarVersion',
+                                _photoUrl,
                                 headers: context
                                     .read<SocialRepository>()
                                     .avatarHeaders,
                                 fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => initials,
+                                frameBuilder: (_, child, frame, _) {
+                                  if (frame != null) _hasPhoto = true;
+                                  return child;
+                                },
+                                errorBuilder: (_, _, _) {
+                                  _hasPhoto = false;
+                                  return initials;
+                                },
                               )
                             : initials,
                       ),

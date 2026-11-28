@@ -35,10 +35,9 @@ Deno.serve(async (request) => {
         headers: { apikey: publishable, Authorization: authorization },
         signal: AbortSignal.timeout(4500),
       });
-      if (!response.ok) throw new CatalogError(response.status >= 500 ? 503 : 401, "auth_unavailable");
-      const id = (await body(response)).id;
-      if (typeof id !== "string") throw new CatalogError(401, "unauthenticated");
-      actor = id;
+      // The catalog is public and the user only keys the rate budget, so a stale token just counts as a guest.
+      const id = response.ok ? (await body(response)).id : await response.body?.cancel();
+      if (typeof id === "string") actor = id;
     }
     const raw = await request.text();
     if (raw.length > 2048) throw new CatalogError(400, "invalid_catalog_request");
